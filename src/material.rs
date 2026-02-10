@@ -42,10 +42,22 @@ impl Dialectric {
 }
 
 #[derive(Clone, Copy)]
+pub struct DiffuseLight {
+    emit: Color,
+}
+
+impl DiffuseLight {
+    pub fn new(emit: Color) -> DiffuseLight {
+        DiffuseLight { emit }
+    }
+}
+
+#[derive(Clone, Copy)]
 pub enum Material {
     Lambertian { albedo: Color },
     Metallic { albedo: Color, fuzz: f64 },
     Dielectric { refraction_index: f64 },
+    DiffuseLight { emit: Color },
 }
 
 impl From<Lambertion> for Material {
@@ -70,6 +82,12 @@ impl From<Dialectric> for Material {
         Material::Dielectric {
             refraction_index: value.refraction_index,
         }
+    }
+}
+
+impl From<DiffuseLight> for Material {
+    fn from(value: DiffuseLight) -> Self {
+        Material::DiffuseLight { emit: value.emit }
     }
 }
 
@@ -121,6 +139,14 @@ impl Material {
                 let scattered = Ray::new(rec.p, direction);
                 Some((attenuation, scattered))
             }
+            Material::DiffuseLight { .. } => None,
+        }
+    }
+
+    pub fn emitted(&self) -> Color {
+        match *self {
+            Material::DiffuseLight { emit } => emit,
+            _ => Color::new(0.0, 0.0, 0.0),
         }
     }
 }

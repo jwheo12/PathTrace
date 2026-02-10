@@ -259,6 +259,10 @@ impl Camera {
                         [1.0, 1.0, 1.0, refraction_index as f32],
                         2.0,
                     ),
+                    Material::DiffuseLight { emit } => (
+                        [emit.r as f32, emit.g as f32, emit.b as f32, 0.0],
+                        3.0,
+                    ),
                 };
 
                 GpuSphere {
@@ -642,24 +646,24 @@ impl Camera {
 
         let mut current_ray = Ray::new(r.origin, r.direction);
         let mut throughput = Color::new(1.0, 1.0, 1.0);
+        let mut radiance = Color::new(0.0, 0.0, 0.0);
 
         for _ in 0..depth {
             if let Some(rec) = world.hit(&current_ray, Interval::new(0.001, f64::INFINITY)) {
+                radiance += throughput * rec.mat.emitted();
                 if let Some((attenuation, scattered)) = rec.mat.scatter(&current_ray, &rec) {
                     throughput = throughput * attenuation;
                     current_ray = scattered;
                     continue;
                 }
-                return Color::new(0.0, 0.0, 0.0);
+                return radiance;
             }
 
-            let unit_direction = current_ray.direction.unit_vector();
-            let a = 0.5 * (unit_direction.y + 1.0);
-            let background =
-                (1.0 - a) * Color::new(1.0, 1.0, 1.0) + a * Color::new(0.5, 0.7, 1.0);
-            return throughput * background;
+            let background = Color::new(0.0, 0.0, 0.0);
+            radiance += throughput * background;
+            return radiance;
         }
 
-        Color::new(0.0, 0.0, 0.0)
+        radiance
     }
 }

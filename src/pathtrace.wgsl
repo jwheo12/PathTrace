@@ -160,6 +160,15 @@ fn world_hit(ray: Ray, t_min: f32) -> HitRecord {
     return rec;
 }
 
+fn emitted_color(rec: HitRecord) -> vec3<f32> {
+    let sphere = spheres[rec.sphere_index];
+    let kind = u32(sphere.kind_data.x + 0.5);
+    if kind == 3u {
+        return sphere.material.xyz;
+    }
+    return vec3<f32>(0.0);
+}
+
 fn scatter(ray: Ray, rec: HitRecord, state: ptr<function, u32>) -> ScatterResult {
     let sphere = spheres[rec.sphere_index];
     let kind = u32(sphere.kind_data.x + 0.5);
@@ -198,6 +207,10 @@ fn scatter(ray: Ray, rec: HitRecord, state: ptr<function, u32>) -> ScatterResult
         return ScatterResult(1u, vec3<f32>(1.0), rec.p, direction);
     }
 
+    if kind == 3u {
+        return ScatterResult(0u, vec3<f32>(0.0), rec.p, vec3<f32>(0.0));
+    }
+
     return ScatterResult(0u, vec3<f32>(0.0), rec.p, vec3<f32>(0.0));
 }
 
@@ -227,6 +240,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         for (var depth: u32 = 0u; depth < max_depth; depth = depth + 1u) {
             let rec = world_hit(ray, RAY_T_MIN);
             if rec.hit == 1u {
+                radiance = radiance + throughput * emitted_color(rec);
                 let sc = scatter(ray, rec, &state);
                 if sc.ok == 0u {
                     break;
@@ -234,12 +248,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 throughput = throughput * sc.attenuation;
                 ray = Ray(sc.origin, sc.direction);
             } else {
-                let unit_direction = normalize(ray.direction);
-                let a = 0.5 * (unit_direction.y + 1.0);
-                let background =
-                    (1.0 - a) * vec3<f32>(1.0, 1.0, 1.0) +
-                    a * vec3<f32>(0.5, 0.7, 1.0);
-                radiance = throughput * background;
+                let background = vec3<f32>(0.0, 0.0, 0.0);
+                radiance = radiance + throughput * background;
                 break;
             }
         }

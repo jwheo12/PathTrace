@@ -15,61 +15,81 @@ use hittable_list::HittableList;
 use sphere::Sphere;
 use vec3::{Vec3,Point3};
 use color::Color;
-use material::{Dialectric, Lambertion, Metal};
-use util::{random_f64,random_f64_range};
+use material::{Dialectric, DiffuseLight, Lambertion, Metal};
+
 fn main() {
     let mut world = HittableList::new();
-    let ground_material = Lambertion::new(Color::new(0.5,0.5,0.5));
-    world.add(Sphere::new(Point3::new(0.0,-1000.0,0.0), 1000.0, ground_material));
-    for a in -11..11 {
-        for b in -11..11 {
-            let choose_mat = random_f64();
-            let center = Point3::new(a as f64 + 0.9*random_f64(),
-                                            0.2,
-                                            b as f64 + 0.9*random_f64());
-            if (center-Point3::new(4.0,0.2,0.0)).length() >0.9 {
-                if choose_mat < 0.8 {
-                    // Shiny silver-like metals: neutral/cool albedo + very low fuzz.
-                    let albedo = Color::new(
-                        random_f64_range(0.80, 0.95),
-                        random_f64_range(0.82, 0.97),
-                        random_f64_range(0.86, 1.00),
-                    );
-                    let fuzz = random_f64_range(0.0,0.03);
-                    let sphere_material = Metal::new(albedo, fuzz);
-                    world.add(Sphere::new(center, 0.2, sphere_material));
-                } else {
-                    let sphere_material = Dialectric::new(1.5);
-                    world.add(Sphere::new(center, 0.2, sphere_material));
 
-                }
-            }
-        }
-    }
-    let material1 = Dialectric::new(1.5);
-    world.add(Sphere::new(Point3::new(0.0,1.0,0.0),1.0,material1));
+    let room_half = 5.0;
+    let wall_radius = 1000.0;
 
-    let material2 = Lambertion::new(Color::new(0.4,0.2,0.1));
-    world.add(Sphere::new(Point3::new(-4.0,1.0,0.0),1.0,material2));
+    let white = Lambertion::new(Color::new(0.73, 0.73, 0.73));
+    let red = Lambertion::new(Color::new(0.65, 0.05, 0.05));
+    let green = Lambertion::new(Color::new(0.12, 0.45, 0.15));
+    let warm_light = DiffuseLight::new(Color::new(18.0, 16.0, 14.0));
 
-    let material3 = Metal::new(Color::new(0.92,0.94,0.98),0.0);
-    world.add(Sphere::new(Point3::new(4.0,1.0,0.0),1.0,material3));
+    // Cornell-box style room from large spheres.
+    world.add(Sphere::new(
+        Point3::new(0.0, -(wall_radius + room_half), 0.0),
+        wall_radius,
+        white,
+    )); // floor
+    world.add(Sphere::new(
+        Point3::new(0.0, wall_radius + room_half, 0.0),
+        wall_radius,
+        white,
+    )); // ceiling
+    world.add(Sphere::new(
+        Point3::new(-(wall_radius + room_half), 0.0, 0.0),
+        wall_radius,
+        red,
+    )); // left wall
+    world.add(Sphere::new(
+        Point3::new(wall_radius + room_half, 0.0, 0.0),
+        wall_radius,
+        green,
+    )); // right wall
+    world.add(Sphere::new(
+        Point3::new(0.0, 0.0, -(wall_radius + room_half)),
+        wall_radius,
+        white,
+    )); // back wall
+
+    // Practical area-like ceiling light.
+    world.add(Sphere::new(Point3::new(0.0, 4.2, 0.0), 0.8, warm_light));
+
+    // Hero objects.
+    world.add(Sphere::new(
+        Point3::new(-1.6, -4.0, -0.8),
+        1.0,
+        Dialectric::new(1.5),
+    ));
+    world.add(Sphere::new(
+        Point3::new(1.5, -4.0, 0.4),
+        1.0,
+        Metal::new(Color::new(0.92, 0.94, 0.98), 0.01),
+    ));
+    world.add(Sphere::new(
+        Point3::new(0.0, -4.25, -2.0),
+        0.75,
+        Lambertion::new(Color::new(0.72, 0.72, 0.70)),
+    ));
 
     let mut cam = Camera::new();
 
 
     cam.aspect_ratio=16.0/9.0;
-    cam.image_width = 3840;
-    cam.samples_per_pixel = 4096;
-    cam.max_depth = 200;
+    cam.image_width = 1280;
+    cam.samples_per_pixel = 1024;
+    cam.max_depth = 100;
 
-    cam.vfov = 20.0;
-    cam.lookfrom = Point3::new(13.0,2.0,3.0);
-    cam.lookat = Point3::new(0.0,0.0,0.0);
+    cam.vfov = 38.0;
+    cam.lookfrom = Point3::new(0.0, 0.3, 14.0);
+    cam.lookat = Point3::new(0.0, -3.6, 0.0);
     cam.vup = Vec3::new(0.0,1.0,0.0);
 
-    cam.defocus_angle = 0.6;
-    cam.focus_dist = 10.0;
+    cam.defocus_angle = 0.0;
+    cam.focus_dist = 14.0;
 
     if std::env::var("PATHTRACE_CPU_ONLY").is_ok() {
         cam.render(&world);
