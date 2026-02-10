@@ -13,6 +13,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 use wgpu::util::DeviceExt;
 
 const GPU_SHADER: &str = include_str!("pathtrace.wgsl");
@@ -482,6 +483,12 @@ impl Camera {
             );
         }
 
+        let progress_start = if show_progress {
+            Some(Instant::now())
+        } else {
+            None
+        };
+
         let mut local_sample_base = 0u32;
         let mut dispatch_idx = 0usize;
         while local_sample_base < total_samples {
@@ -512,7 +519,15 @@ impl Camera {
 
             local_sample_base += samples_this_pass;
             if show_progress {
-                eprint!("\rGPU sampling: {local_sample_base}/{total_samples} ");
+                let elapsed_sec = progress_start
+                    .as_ref()
+                    .map(|start| start.elapsed().as_secs_f64())
+                    .unwrap_or(0.0)
+                    .max(1e-6);
+                let samples_per_sec = (local_sample_base as f64 / elapsed_sec).round() as u64;
+                eprint!(
+                    "\rGPU sampling: {local_sample_base}/{total_samples} ({samples_per_sec} samples/sec) "
+                );
             }
         }
         device.poll(wgpu::Maintain::Wait);
