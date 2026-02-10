@@ -81,8 +81,8 @@ fn main() {
 
 
     cam.aspect_ratio=16.0/9.0;
-    cam.image_width = 3840;
-    cam.samples_per_pixel = 8192;
+    cam.image_width = 1280;
+    cam.samples_per_pixel = 1024;
     cam.max_depth = 250;
 
     cam.vfov = 38.0;
