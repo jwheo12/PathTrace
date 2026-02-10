@@ -98,7 +98,7 @@ impl Camera {
 
     pub fn render_gpu(&mut self, world: &HittableList) -> Result<(), String> {
         self.initialize();
-        let rows = self.render_gpu_rows(world, true, 0)?;
+        let rows = self.render_gpu_rows(world, true, 0, true)?;
         self.write_outputs(&rows)
             .map_err(|e| format!("Failed to write rendered images: {e}"))?;
         eprint!("\rDone                                  \n");
@@ -152,7 +152,7 @@ impl Camera {
                 }
                 let spp = (total_samples - sample_base).min(chunk_samples);
                 gpu_cam.samples_per_pixel = spp;
-                let rows = gpu_cam.render_gpu_rows(&world_for_gpu, false, sample_base as u32)?;
+                let rows = gpu_cam.render_gpu_rows(&world_for_gpu, false, sample_base as u32, false)?;
                 Camera::accumulate_rows_scaled(&mut gpu_sum_rows, &rows, spp as f64);
                 let done = completed_for_gpu.fetch_add(spp, Ordering::Relaxed) + spp;
                 eprint!("\rHybrid spp done: {}/{} ", done.min(total_samples), total_samples);
@@ -237,6 +237,7 @@ impl Camera {
         world: &HittableList,
         show_progress: bool,
         sample_base_offset: u32,
+        gpu_only_mode: bool,
     ) -> Result<Vec<Vec<Color>>, String> {
         if show_progress {
             eprint!("\rGPU render dispatching...            ");
@@ -349,12 +350,6 @@ impl Camera {
         ))
         .map_err(|e| format!("Failed to create GPU device: {e}"))?;
 
-        let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("gpu-params-buffer"),
-            contents: bytemuck::bytes_of(&params),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
         let spheres_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("gpu-spheres-buffer"),
             contents: bytemuck::cast_slice(&gpu_spheres),
@@ -417,24 +412,40 @@ impl Camera {
                 ],
             });
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("gpu-bind-group"),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: params_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: spheres_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: output_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        let default_in_flight = if gpu_only_mode { 8 } else { 1 };
+        let in_flight_dispatches = Camera::env_usize("PATHTRACE_GPU_INFLIGHT_DISPATCHES")
+            .unwrap_or(default_in_flight)
+            .max(1);
+
+        let mut params_buffers = Vec::with_capacity(in_flight_dispatches);
+        let mut bind_groups = Vec::with_capacity(in_flight_dispatches);
+        for _ in 0..in_flight_dispatches {
+            let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("gpu-params-buffer"),
+                contents: bytemuck::bytes_of(&params),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("gpu-bind-group"),
+                layout: &bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: params_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: spheres_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: output_buffer.as_entire_binding(),
+                    },
+                ],
+            });
+            params_buffers.push(params_buffer);
+            bind_groups.push(bind_group);
+        }
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("gpu-pathtrace-shader"),
@@ -456,14 +467,33 @@ impl Camera {
 
         let workgroup_x = (self.image_width as u32).div_ceil(8);
         let workgroup_y = (self.image_height as u32).div_ceil(8);
-        let samples_per_dispatch = (256 / max_depth).clamp(1, 16);
+        let dispatch_base = if gpu_only_mode { 1024 } else { 256 };
+        let dispatch_cap = if gpu_only_mode { 64 } else { 16 };
+        let default_samples_per_dispatch = (dispatch_base / max_depth).clamp(1, dispatch_cap);
+        let samples_per_dispatch = Camera::env_usize("PATHTRACE_GPU_SPP_PER_DISPATCH")
+            .map(|v| v as u32)
+            .unwrap_or(default_samples_per_dispatch)
+            .clamp(1, total_samples.max(1));
+
+        if show_progress {
+            eprint!(
+                "\rGPU render dispatching... (spp/dispatch={}, inflight={}) ",
+                samples_per_dispatch, in_flight_dispatches
+            );
+        }
 
         let mut local_sample_base = 0u32;
+        let mut dispatch_idx = 0usize;
         while local_sample_base < total_samples {
+            let slot = dispatch_idx % in_flight_dispatches;
+            if dispatch_idx > 0 && slot == 0 {
+                device.poll(wgpu::Maintain::Wait);
+            }
+
             let samples_this_pass = (total_samples - local_sample_base).min(samples_per_dispatch);
             params.dims[2] = samples_this_pass;
             params.scene[1] = sample_base_offset + local_sample_base;
-            queue.write_buffer(&params_buffer, 0, bytemuck::bytes_of(&params));
+            queue.write_buffer(&params_buffers[slot], 0, bytemuck::bytes_of(&params));
 
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("gpu-command-encoder"),
@@ -474,17 +504,18 @@ impl Camera {
                     timestamp_writes: None,
                 });
                 compute_pass.set_pipeline(&pipeline);
-                compute_pass.set_bind_group(0, &bind_group, &[]);
+                compute_pass.set_bind_group(0, &bind_groups[slot], &[]);
                 compute_pass.dispatch_workgroups(workgroup_x, workgroup_y, 1);
             }
             queue.submit(Some(encoder.finish()));
-            device.poll(wgpu::Maintain::Wait);
+            dispatch_idx += 1;
 
             local_sample_base += samples_this_pass;
             if show_progress {
                 eprint!("\rGPU sampling: {local_sample_base}/{total_samples} ");
             }
         }
+        device.poll(wgpu::Maintain::Wait);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("gpu-readback-encoder"),
