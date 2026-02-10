@@ -82,8 +82,8 @@ fn main() {
 
     cam.aspect_ratio=16.0/9.0;
     cam.image_width = 3840;
-    cam.samples_per_pixel = 32768;
-    cam.max_depth = 100;
+    cam.samples_per_pixel = 8192;
+    cam.max_depth = 250;
 
     cam.vfov = 38.0;
     cam.lookfrom = Point3::new(0.0, 0.3, 14.0);
