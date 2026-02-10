@@ -9,11 +9,12 @@ use crate::test::Point3;
 use crate::util::random_f64;
 use crate::vec3::Vec3;
 use rayon::prelude::*;
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use wgpu::util::DeviceExt;
 
 const GPU_SHADER: &str = include_str!("pathtrace.wgsl");
@@ -100,6 +101,7 @@ impl Camera {
     pub fn render_gpu(&mut self, world: &HittableList) -> Result<(), String> {
         self.initialize();
         let rows = self.render_gpu_rows(world, true, 0, true)?;
+        eprint!("\rGPU done, writing image files...                     ");
         self.write_outputs(&rows)
             .map_err(|e| format!("Failed to write rendered images: {e}"))?;
         eprint!("\rDone                                  \n");
@@ -475,11 +477,18 @@ impl Camera {
             .map(|v| v as u32)
             .unwrap_or(default_samples_per_dispatch)
             .clamp(1, total_samples.max(1));
+        let target_outstanding_spp = Camera::env_usize("PATHTRACE_GPU_TARGET_OUTSTANDING_SPP")
+            .map(|v| v as u32)
+            .unwrap_or(if gpu_only_mode { 64 } else { 16 })
+            .max(samples_per_dispatch);
+        let dispatches_before_poll =
+            ((target_outstanding_spp / samples_per_dispatch).max(1))
+                .min(in_flight_dispatches as u32) as usize;
 
         if show_progress {
             eprint!(
-                "\rGPU render dispatching... (spp/dispatch={}, inflight={}) ",
-                samples_per_dispatch, in_flight_dispatches
+                "\rGPU render dispatching... (spp/dispatch={}, inflight={}, poll_every={} dispatches) ",
+                samples_per_dispatch, in_flight_dispatches, dispatches_before_poll
             );
         }
 
@@ -489,17 +498,16 @@ impl Camera {
             None
         };
 
-        let mut local_sample_base = 0u32;
+        let mut submitted_sample_base = 0u32;
         let mut dispatch_idx = 0usize;
-        while local_sample_base < total_samples {
+        let mut in_flight_submissions: VecDeque<(wgpu::SubmissionIndex, u32)> = VecDeque::new();
+        while submitted_sample_base < total_samples {
             let slot = dispatch_idx % in_flight_dispatches;
-            if dispatch_idx > 0 && slot == 0 {
-                device.poll(wgpu::Maintain::Wait);
-            }
 
-            let samples_this_pass = (total_samples - local_sample_base).min(samples_per_dispatch);
+            let samples_this_pass =
+                (total_samples - submitted_sample_base).min(samples_per_dispatch);
             params.dims[2] = samples_this_pass;
-            params.scene[1] = sample_base_offset + local_sample_base;
+            params.scene[1] = sample_base_offset + submitted_sample_base;
             queue.write_buffer(&params_buffers[slot], 0, bytemuck::bytes_of(&params));
 
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -514,41 +522,89 @@ impl Camera {
                 compute_pass.set_bind_group(0, &bind_groups[slot], &[]);
                 compute_pass.dispatch_workgroups(workgroup_x, workgroup_y, 1);
             }
-            queue.submit(Some(encoder.finish()));
+            let submission = queue.submit(Some(encoder.finish()));
             dispatch_idx += 1;
 
-            local_sample_base += samples_this_pass;
+            submitted_sample_base += samples_this_pass;
+            in_flight_submissions.push_back((submission, submitted_sample_base));
+
+            while in_flight_submissions.len() >= dispatches_before_poll {
+                if let Some((submission_to_wait, completed_samples)) = in_flight_submissions.pop_front()
+                {
+                    device.poll(wgpu::Maintain::wait_for(submission_to_wait));
+                    if show_progress {
+                        let elapsed_sec = progress_start
+                            .as_ref()
+                            .map(|start| start.elapsed().as_secs_f64())
+                            .unwrap_or(0.0)
+                            .max(1e-6);
+                        let samples_per_sec =
+                            (completed_samples as f64 / elapsed_sec).round() as u64;
+                        eprint!(
+                            "\rGPU sampling: {completed_samples}/{total_samples} ({samples_per_sec} samples/sec) "
+                        );
+                    }
+                }
+            }
+        }
+
+        while let Some((submission_to_wait, completed_samples)) = in_flight_submissions.pop_front()
+        {
+            device.poll(wgpu::Maintain::wait_for(submission_to_wait));
             if show_progress {
                 let elapsed_sec = progress_start
                     .as_ref()
                     .map(|start| start.elapsed().as_secs_f64())
                     .unwrap_or(0.0)
                     .max(1e-6);
-                let samples_per_sec = (local_sample_base as f64 / elapsed_sec).round() as u64;
+                let samples_per_sec = (completed_samples as f64 / elapsed_sec).round() as u64;
                 eprint!(
-                    "\rGPU sampling: {local_sample_base}/{total_samples} ({samples_per_sec} samples/sec) "
+                    "\rGPU sampling: {completed_samples}/{total_samples} ({samples_per_sec} samples/sec) "
                 );
             }
         }
-        device.poll(wgpu::Maintain::Wait);
+
+        if show_progress {
+            eprint!("\rGPU compute complete, reading back...                ");
+        }
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("gpu-readback-encoder"),
         });
         encoder.copy_buffer_to_buffer(&output_buffer, 0, &readback_buffer, 0, output_buffer_size);
-        queue.submit(Some(encoder.finish()));
+        let copy_submission = queue.submit(Some(encoder.finish()));
+        device.poll(wgpu::Maintain::wait_for(copy_submission));
 
         let buffer_slice = readback_buffer.slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = sender.send(result);
         });
-        device.poll(wgpu::Maintain::Wait);
+        let map_timeout_secs = Camera::env_usize("PATHTRACE_GPU_MAP_TIMEOUT_SEC")
+            .unwrap_or(120) as u64;
+        let map_wait_start = Instant::now();
+        loop {
+            match receiver.try_recv() {
+                Ok(map_result) => {
+                    map_result
+                        .map_err(|e| format!("Failed to map GPU output buffer: {e:?}"))?;
+                    break;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    return Err("GPU map callback channel disconnected".to_string());
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
 
-        receiver
-            .recv()
-            .map_err(|_| "Failed to receive GPU map result".to_string())?
-            .map_err(|e| format!("Failed to map GPU output buffer: {e:?}"))?;
+            if map_wait_start.elapsed() >= Duration::from_secs(map_timeout_secs) {
+                return Err(format!(
+                    "Timed out waiting for GPU readback map after {map_timeout_secs}s. \
+Try lowering PATHTRACE_GPU_SPP_PER_DISPATCH or PATHTRACE_GPU_INFLIGHT_DISPATCHES."
+                ));
+            }
+            device.poll(wgpu::Maintain::Poll);
+            std::thread::sleep(Duration::from_millis(2));
+        }
 
         let data = buffer_slice.get_mapped_range();
         let pixels: &[[f32; 4]] = bytemuck::cast_slice(&data);

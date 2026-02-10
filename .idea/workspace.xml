@@ -14,9 +14,7 @@
     </cargoProject>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="75173ee4-9ec3-469a-9dac-bb0839b820bd" name="변경" comment="run!">
-      <change beforePath="$PROJECT_DIR$/src/camera.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/camera.rs" afterDir="false" />
-    </list>
+    <list default="true" id="75173ee4-9ec3-469a-9dac-bb0839b820bd" name="변경" comment="run!" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -139,7 +137,7 @@
       <workItem from="1770646488360" duration="24275000" />
       <workItem from="1770679112415" duration="15919000" />
       <workItem from="1770741601755" duration="2809000" />
-      <workItem from="1770744437950" duration="5200000" />
+      <workItem from="1770744437950" duration="6097000" />
     </task>
     <task id="LOCAL-00001" summary="run!">
       <option name="closed" value="true" />
@@ -213,7 +211,15 @@
       <option name="project" value="LOCAL" />
       <updated>1770749182285</updated>
     </task>
-    <option name="localTasksCounter" value="10" />
+    <task id="LOCAL-00010" summary="run!">
+      <option name="closed" value="true" />
+      <created>1770749797861</created>
+      <option name="number" value="00010" />
+      <option name="presentableId" value="LOCAL-00010" />
+      <option name="project" value="LOCAL" />
+      <updated>1770749797861</updated>
+    </task>
+    <option name="localTasksCounter" value="11" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
