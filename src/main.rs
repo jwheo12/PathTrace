@@ -80,10 +80,10 @@ fn main() {
     let mut cam = Camera::new();
 
 
-    cam.aspect_ratio=16.0/9.0;
-    cam.image_width = 1280;
-    cam.samples_per_pixel = 1024;
-    cam.max_depth = 250;
+    cam.aspect_ratio= 4.0/3.0;
+    cam.image_width = 2160;
+    cam.samples_per_pixel = 16384;
+    cam.max_depth = 200;
 
     cam.vfov = 38.0;
     cam.lookfrom = Point3::new(0.0, 0.3, 14.0);
