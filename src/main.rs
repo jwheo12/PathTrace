@@ -26,13 +26,15 @@ fn main() {
     let white = Lambertion::new(Color::new(0.73, 0.73, 0.73));
     let red = Lambertion::new(Color::new(0.65, 0.05, 0.05));
     let green = Lambertion::new(Color::new(0.12, 0.45, 0.15));
-    let warm_light = DiffuseLight::new(Color::new(18.0, 16.0, 14.0));
+    let blue = Lambertion::new(Color::new(0.10, 0.18, 0.70));
+    let glossy_black_floor = Metal::new(Color::new(0.05, 0.05, 0.06), 0.01);
+    let warm_light = DiffuseLight::new(Color::new(36.0, 32.0, 28.0));
 
     // Cornell-box style room from large spheres.
     world.add(Sphere::new(
         Point3::new(0.0, -(wall_radius + room_half), 0.0),
         wall_radius,
-        white,
+        glossy_black_floor,
     )); // floor
     world.add(Sphere::new(
         Point3::new(0.0, wall_radius + room_half, 0.0),
@@ -52,11 +54,11 @@ fn main() {
     world.add(Sphere::new(
         Point3::new(0.0, 0.0, -(wall_radius + room_half)),
         wall_radius,
-        white,
+        blue,
     )); // back wall
 
     // Practical area-like ceiling light.
-    world.add(Sphere::new(Point3::new(0.0, 4.2, 0.0), 0.8, warm_light));
+    world.add(Sphere::new(Point3::new(0.0, 4.2, 0.0), 1.6, warm_light));
 
     // Hero objects.
     world.add(Sphere::new(
@@ -80,7 +82,7 @@ fn main() {
 
     cam.aspect_ratio=16.0/9.0;
     cam.image_width = 1280;
-    cam.samples_per_pixel = 1024;
+    cam.samples_per_pixel = 2048;
     cam.max_depth = 100;
 
     cam.vfov = 38.0;
