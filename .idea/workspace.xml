@@ -14,16 +14,14 @@
     </cargoProject>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="75173ee4-9ec3-469a-9dac-bb0839b820bd" name="변경" comment="run!">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-    </list>
+    <list default="true" id="75173ee4-9ec3-469a-9dac-bb0839b820bd" name="변경" comment="run!" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="18" />
+    <option name="cachedIndexableFilesCount" value="22" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="ExecutionTargetManager" SELECTED_TARGET="RsBuildProfile:release" />
@@ -140,6 +138,7 @@
       <workItem from="1770679112415" duration="15919000" />
       <workItem from="1770741601755" duration="2809000" />
       <workItem from="1770744437950" duration="10535000" />
+      <workItem from="1770767075481" duration="773000" />
     </task>
     <task id="LOCAL-00001" summary="run!">
       <option name="closed" value="true" />
@@ -245,7 +244,15 @@
       <option name="project" value="LOCAL" />
       <updated>1770758189668</updated>
     </task>
-    <option name="localTasksCounter" value="14" />
+    <task id="LOCAL-00014" summary="run!">
+      <option name="closed" value="true" />
+      <created>1770767270158</created>
+      <option name="number" value="00014" />
+      <option name="presentableId" value="LOCAL-00014" />
+      <option name="project" value="LOCAL" />
+      <updated>1770767270158</updated>
+    </task>
+    <option name="localTasksCounter" value="15" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">

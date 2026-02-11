@@ -80,7 +80,7 @@ fn main() {
     let mut cam = Camera::new();
 
 
-    cam.aspect_ratio= 4.0/3.0;
+    cam.aspect_ratio= 3.0/4.0;
     cam.image_width = 2160;
     cam.samples_per_pixel = 16384;
     cam.max_depth = 200;
