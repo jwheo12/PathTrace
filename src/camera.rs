@@ -23,7 +23,7 @@ const GPU_SHADER: &str = include_str!("pathtrace.wgsl");
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GpuParams {
     dims: [u32; 4],  // width, height, samples, max_depth
-    scene: [u32; 4], // sphere_count, reserved...
+    scene: [u32; 4], // sphere_count, sample_base, plane_count, reserved
     center: [f32; 4],
     pixel00: [f32; 4],
     delta_u: [f32; 4],
@@ -44,6 +44,26 @@ impl GpuSphere {
     fn dummy() -> Self {
         Self {
             center_radius: [0.0, -10000.0, 0.0, 1.0],
+            material: [0.0, 0.0, 0.0, 0.0],
+            meta: [0.0, 0.0, 0.0, 0.0],
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GpuPlane {
+    point: [f32; 4],    // xyz + unused
+    normal: [f32; 4],   // xyz + unused
+    material: [f32; 4], // rgb + (fuzz or refraction_index)
+    meta: [f32; 4],     // x = material kind (0 lambert, 1 metal, 2 dielectric, 3 light)
+}
+
+impl GpuPlane {
+    fn dummy() -> Self {
+        Self {
+            point: [0.0, -10000.0, 0.0, 0.0],
+            normal: [0.0, 1.0, 0.0, 0.0],
             material: [0.0, 0.0, 0.0, 0.0],
             meta: [0.0, 0.0, 0.0, 0.0],
         }
@@ -255,32 +275,37 @@ impl Camera {
             eprint!("\rGPU render dispatching...            ");
         }
 
+        let encode_material = |mat: Material| -> ([f32; 4], f32) {
+            match mat {
+                Material::Lambertian { albedo } => (
+                    [albedo.r as f32, albedo.g as f32, albedo.b as f32, 0.0],
+                    0.0,
+                ),
+                Material::Metallic { albedo, fuzz } => (
+                    [
+                        albedo.r as f32,
+                        albedo.g as f32,
+                        albedo.b as f32,
+                        fuzz as f32,
+                    ],
+                    1.0,
+                ),
+                Material::Dielectric { refraction_index } => {
+                    ([1.0, 1.0, 1.0, refraction_index as f32], 2.0)
+                }
+                Material::DiffuseLight { emit } => {
+                    ([emit.r as f32, emit.g as f32, emit.b as f32, 0.0], 3.0)
+                }
+            }
+        };
+
         let sphere_count = world.spheres().len() as u32;
+        let plane_count = world.planes().len() as u32;
         let mut gpu_spheres: Vec<GpuSphere> = world
             .spheres()
             .iter()
             .map(|sphere| {
-                let (material, kind) = match sphere.mat {
-                    Material::Lambertian { albedo } => (
-                        [albedo.r as f32, albedo.g as f32, albedo.b as f32, 0.0],
-                        0.0,
-                    ),
-                    Material::Metallic { albedo, fuzz } => (
-                        [
-                            albedo.r as f32,
-                            albedo.g as f32,
-                            albedo.b as f32,
-                            fuzz as f32,
-                        ],
-                        1.0,
-                    ),
-                    Material::Dielectric { refraction_index } => {
-                        ([1.0, 1.0, 1.0, refraction_index as f32], 2.0)
-                    }
-                    Material::DiffuseLight { emit } => {
-                        ([emit.r as f32, emit.g as f32, emit.b as f32, 0.0], 3.0)
-                    }
-                };
+                let (material, kind) = encode_material(sphere.mat);
 
                 GpuSphere {
                     center_radius: [
@@ -299,6 +324,34 @@ impl Camera {
             gpu_spheres.push(GpuSphere::dummy());
         }
 
+        let mut gpu_planes: Vec<GpuPlane> = world
+            .planes()
+            .iter()
+            .map(|plane| {
+                let (material, kind) = encode_material(plane.mat);
+
+                GpuPlane {
+                    point: [
+                        plane.point.x as f32,
+                        plane.point.y as f32,
+                        plane.point.z as f32,
+                        0.0,
+                    ],
+                    normal: [
+                        plane.normal.x as f32,
+                        plane.normal.y as f32,
+                        plane.normal.z as f32,
+                        0.0,
+                    ],
+                    material,
+                    meta: [kind, 0.0, 0.0, 0.0],
+                }
+            })
+            .collect();
+        if gpu_planes.is_empty() {
+            gpu_planes.push(GpuPlane::dummy());
+        }
+
         let total_samples = self.samples_per_pixel.max(1) as u32;
         let max_depth = self.max_depth.max(1) as u32;
         let defocus_enabled = if self.defocus_angle > 0.0 { 1.0 } else { 0.0 };
@@ -309,7 +362,7 @@ impl Camera {
                 0,
                 max_depth,
             ],
-            scene: [sphere_count, 0, 0, 0],
+            scene: [sphere_count, 0, plane_count, 0],
             center: [
                 self.center.x as f32,
                 self.center.y as f32,
@@ -372,6 +425,12 @@ impl Camera {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
 
+        let planes_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("gpu-planes-buffer"),
+            contents: bytemuck::cast_slice(&gpu_planes),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+
         let output_len = self.image_width * self.image_height;
         let output_buffer_size =
             (output_len * std::mem::size_of::<[f32; 4]>()) as wgpu::BufferAddress;
@@ -424,6 +483,16 @@ impl Camera {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -455,6 +524,10 @@ impl Camera {
                     wgpu::BindGroupEntry {
                         binding: 2,
                         resource: output_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: planes_buffer.as_entire_binding(),
                     },
                 ],
             });

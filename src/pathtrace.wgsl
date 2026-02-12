@@ -1,6 +1,6 @@
 struct Params {
     dims: vec4<u32>,      // width, height, samples, max_depth
-    scene: vec4<u32>,     // sphere_count, reserved...
+    scene: vec4<u32>,     // sphere_count, sample_base, plane_count, reserved
     center: vec4<f32>,
     pixel00: vec4<f32>,
     delta_u: vec4<f32>,
@@ -11,6 +11,13 @@ struct Params {
 
 struct Sphere {
     center_radius: vec4<f32>, // xyz + radius
+    material: vec4<f32>,      // rgb + (fuzz or refraction_index)
+    kind_data: vec4<f32>,     // x = kind (0 lambert, 1 metal, 2 dielectric)
+}
+
+struct Plane {
+    point: vec4<f32>,         // xyz + unused
+    normal: vec4<f32>,        // xyz + unused
     material: vec4<f32>,      // rgb + (fuzz or refraction_index)
     kind_data: vec4<f32>,     // x = kind (0 lambert, 1 metal, 2 dielectric)
 }
@@ -26,7 +33,8 @@ struct HitRecord {
     p: vec3<f32>,
     normal: vec3<f32>,
     front_face: u32,
-    sphere_index: u32,
+    object_kind: u32,  // 0 sphere, 1 plane
+    object_index: u32,
 }
 
 struct ScatterResult {
@@ -41,6 +49,7 @@ const RAY_T_MIN: f32 = 0.001;
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read> spheres: array<Sphere>;
 @group(0) @binding(2) var<storage, read_write> output_pixels: array<vec4<f32>>;
+@group(0) @binding(3) var<storage, read> planes: array<Plane>;
 
 fn rng_next(state: ptr<function, u32>) -> f32 {
     (*state) = (*state) * 1664525u + 1013904223u;
@@ -117,9 +126,10 @@ fn get_ray(i: u32, j: u32, state: ptr<function, u32>) -> Ray {
 }
 
 fn world_hit(ray: Ray, t_min: f32) -> HitRecord {
-    var rec = HitRecord(0u, 0.0, vec3<f32>(0.0), vec3<f32>(0.0), 0u, 0u);
+    var rec = HitRecord(0u, 0.0, vec3<f32>(0.0), vec3<f32>(0.0), 0u, 0u, 0u);
     var closest = 1e30;
     let sphere_count = params.scene.x;
+    let plane_count = params.scene.z;
 
     for (var i: u32 = 0u; i < sphere_count; i = i + 1u) {
         let sphere = spheres[i];
@@ -153,45 +163,91 @@ fn world_hit(ray: Ray, t_min: f32) -> HitRecord {
         rec.p = p;
         rec.normal = normal;
         rec.front_face = select(0u, 1u, front);
-        rec.sphere_index = i;
+        rec.object_kind = 0u;
+        rec.object_index = i;
+        closest = root;
+    }
+
+    for (var i: u32 = 0u; i < plane_count; i = i + 1u) {
+        let plane = planes[i];
+        let n = normalize(plane.normal.xyz);
+        let denom = dot(n, ray.direction);
+        if abs(denom) < 1e-5 {
+            continue;
+        }
+
+        let root = dot(plane.point.xyz - ray.origin, n) / denom;
+        if !(root > t_min && root < closest) {
+            continue;
+        }
+
+        let p = ray.origin + root * ray.direction;
+        var normal = n;
+        let front = dot(ray.direction, normal) < 0.0;
+        if !front {
+            normal = -normal;
+        }
+
+        rec.hit = 1u;
+        rec.t = root;
+        rec.p = p;
+        rec.normal = normal;
+        rec.front_face = select(0u, 1u, front);
+        rec.object_kind = 1u;
+        rec.object_index = i;
         closest = root;
     }
 
     return rec;
 }
 
+fn material_kind(rec: HitRecord) -> u32 {
+    if rec.object_kind == 0u {
+        let sphere = spheres[rec.object_index];
+        return u32(sphere.kind_data.x + 0.5);
+    }
+    let plane = planes[rec.object_index];
+    return u32(plane.kind_data.x + 0.5);
+}
+
+fn material_data(rec: HitRecord) -> vec4<f32> {
+    if rec.object_kind == 0u {
+        return spheres[rec.object_index].material;
+    }
+    return planes[rec.object_index].material;
+}
+
 fn emitted_color(rec: HitRecord) -> vec3<f32> {
-    let sphere = spheres[rec.sphere_index];
-    let kind = u32(sphere.kind_data.x + 0.5);
+    let kind = material_kind(rec);
     if kind == 3u {
-        return sphere.material.xyz;
+        return material_data(rec).xyz;
     }
     return vec3<f32>(0.0);
 }
 
 fn scatter(ray: Ray, rec: HitRecord, state: ptr<function, u32>) -> ScatterResult {
-    let sphere = spheres[rec.sphere_index];
-    let kind = u32(sphere.kind_data.x + 0.5);
+    let mat = material_data(rec);
+    let kind = material_kind(rec);
 
     if kind == 0u {
         var scatter_direction = rec.normal + random_unit_vector(state);
         if near_zero(scatter_direction) {
             scatter_direction = rec.normal;
         }
-        return ScatterResult(1u, sphere.material.xyz, rec.p, scatter_direction);
+        return ScatterResult(1u, mat.xyz, rec.p, scatter_direction);
     }
 
     if kind == 1u {
         var reflected = reflect(normalize(ray.direction), rec.normal);
-        reflected = reflected + sphere.material.w * random_unit_vector(state);
+        reflected = reflected + mat.w * random_unit_vector(state);
         if dot(reflected, rec.normal) <= 0.0 {
             return ScatterResult(0u, vec3<f32>(0.0), rec.p, reflected);
         }
-        return ScatterResult(1u, sphere.material.xyz, rec.p, reflected);
+        return ScatterResult(1u, mat.xyz, rec.p, reflected);
     }
 
     if kind == 2u {
-        let ir = sphere.material.w;
+        let ir = mat.w;
         let ri = select(ir, 1.0 / ir, rec.front_face == 1u);
         let unit_direction = normalize(ray.direction);
         let cos_theta = min(dot(-unit_direction, rec.normal), 1.0);
