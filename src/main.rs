@@ -1,5 +1,7 @@
+mod box3;
 mod camera;
 mod color;
+mod cylinder;
 mod hittable;
 mod hittable_list;
 mod interval;
@@ -11,17 +13,15 @@ mod test;
 mod util;
 mod vec3;
 
+use box3::Box3;
 use camera::Camera;
 use color::Color;
+use cylinder::Cylinder;
 use hittable_list::HittableList;
-use material::{Dialectric, DiffuseLight, Lambertion, Metal};
+use material::{Dialectric, DiffuseLight, Lambertion, Material, Metal};
 use plane::Plane;
 use sphere::Sphere;
 use std::f64::consts::PI;
-use std::fs;
-use std::path::Path;
-use std::process::Command;
-use std::time::Instant;
 use vec3::{Point3, Vec3};
 
 fn env_usize(name: &str, default: usize) -> usize {
@@ -29,13 +29,6 @@ fn env_usize(name: &str, default: usize) -> usize {
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&v| v > 0)
-        .unwrap_or(default)
-}
-
-fn env_f64(name: &str, default: f64) -> f64 {
-    std::env::var(name)
-        .ok()
-        .and_then(|v| v.parse::<f64>().ok())
         .unwrap_or(default)
 }
 
@@ -55,333 +48,243 @@ fn hash_range(seed: u32, min: f64, max: f64) -> f64 {
     min + (max - min) * hash01(seed)
 }
 
-fn build_cinematic_world(frame_idx: usize, total_frames: usize) -> HittableList {
+fn build_cinematic_world() -> HittableList {
     let mut world = HittableList::new();
-    let frame_t = if total_frames <= 1 {
-        0.0
-    } else {
-        frame_idx as f64 / (total_frames - 1) as f64
-    };
 
+    let floor_stone = Lambertion::new(Color::new(0.70, 0.69, 0.66));
     let grass = Lambertion::new(Color::new(0.28, 0.52, 0.26));
-    let plaza_stone = Lambertion::new(Color::new(0.72, 0.70, 0.66));
-    let brushed_steel = Metal::new(Color::new(0.78, 0.82, 0.86), 0.03);
-    let mirror_chrome = Metal::new(Color::new(0.95, 0.97, 0.99), 0.0);
-    let polished_copper = Metal::new(Color::new(0.90, 0.58, 0.30), 0.02);
+    let foliage_dark = Lambertion::new(Color::new(0.14, 0.34, 0.16));
+    let foliage_light = Lambertion::new(Color::new(0.20, 0.45, 0.20));
+    let white_plaster = Lambertion::new(Color::new(0.82, 0.80, 0.78));
+    let terracotta = Lambertion::new(Color::new(0.66, 0.34, 0.22));
+    let glass = Dialectric::new(1.5);
+    let chrome = Metal::new(Color::new(0.95, 0.97, 0.99), 0.0);
+    let brushed = Metal::new(Color::new(0.74, 0.78, 0.82), 0.06);
+    let copper = Metal::new(Color::new(0.88, 0.56, 0.30), 0.03);
 
-    let sky_light = DiffuseLight::new(Color::new(0.62, 0.76, 1.08));
-    let sun_light = DiffuseLight::new(Color::new(110.0, 98.0, 72.0));
-    let fill_light = DiffuseLight::new(Color::new(4.0, 6.0, 9.0));
+    let sky_light = DiffuseLight::new(Color::new(0.66, 0.80, 1.12));
+    let sun_light = DiffuseLight::new(Color::new(118.0, 102.0, 76.0));
+    let fill_light = DiffuseLight::new(Color::new(4.5, 6.5, 9.0));
 
-    // Sky + sun + ground.
+    // Sky and sunlight.
     world.add(Sphere::new(Point3::new(0.0, 0.0, 0.0), 5200.0, sky_light));
-    world.add_plane(Plane::new(
-        Point3::new(0.0, 0.0, 0.0),
-        Vec3::new(0.0, 1.0, 0.0),
-        plaza_stone,
-    ));
-    world.add(Sphere::new(Point3::new(0.0, -1200.0, 0.0), 1200.0, grass));
-
-    let sun_theta = (0.18 + 0.28 * frame_t) * PI;
     world.add(Sphere::new(
-        Point3::new(
-            220.0 * sun_theta.cos(),
-            165.0 + 25.0 * frame_t,
-            -240.0 + 80.0 * sun_theta.sin(),
-        ),
-        52.0,
+        Point3::new(185.0, 170.0, -250.0),
+        56.0,
         sun_light,
     ));
 
-    // Hero objects.
-    world.add(Sphere::new(
-        Point3::new(0.0, 1.35, -1.1),
-        1.35,
-        Dialectric::new(1.5),
+    // Large ground layers.
+    world.add_plane(Plane::new(
+        Point3::new(0.0, 0.0, 0.0),
+        Vec3::new(0.0, 1.0, 0.0),
+        floor_stone,
     ));
-    world.add(Sphere::new(
-        Point3::new(2.8, 1.05, 0.45),
-        1.05,
-        mirror_chrome,
-    ));
-    world.add(Sphere::new(
-        Point3::new(-2.7, 1.10, 0.15),
-        1.10,
-        polished_copper,
-    ));
-    world.add(Sphere::new(
-        Point3::new(0.7, 0.58, 2.7),
-        0.58,
-        brushed_steel,
-    ));
-    world.add(Sphere::new(Point3::new(0.0, 1.2, -16.0), 1.1, fill_light));
+    world.add(Sphere::new(Point3::new(0.0, -1400.0, 0.0), 1400.0, grass));
 
-    // Glass-light arches around center.
-    for i in 0..96 {
-        let a = i as f64 / 96.0 * 2.0 * PI;
-        let r = 8.2 + 0.8 * (3.0 * a + frame_t * 2.0 * PI).sin();
-        let x = r * a.cos();
-        let z = r * a.sin() - 1.2;
-        let y = 0.24 + 0.10 * (a * 4.0).sin().abs();
-        if i % 4 == 0 {
-            world.add(Sphere::new(
-                Point3::new(x, y, z),
-                0.20,
-                DiffuseLight::new(Color::new(8.5, 7.5, 6.0)),
-            ));
-        } else {
-            world.add(Sphere::new(
-                Point3::new(x, y, z),
-                0.20,
-                Dialectric::new(1.5),
-            ));
-        }
+    // Center hero cluster (mix of shapes).
+    world.add(Sphere::new(Point3::new(0.0, 1.35, -1.4), 1.35, glass));
+    world.add_cylinder(Cylinder::new(
+        Point3::new(-2.8, 0.0, -0.2),
+        0.86,
+        0.0,
+        2.15,
+        copper,
+    ));
+    world.add_box(Box3::new(
+        Point3::new(2.0, 0.0, -1.0),
+        Point3::new(3.7, 2.2, 0.7),
+        chrome,
+    ));
+    world.add_box(Box3::new(
+        Point3::new(-0.8, 0.0, 1.8),
+        Point3::new(0.9, 1.35, 3.2),
+        brushed,
+    ));
+    world.add_cylinder(Cylinder::new(
+        Point3::new(1.8, 0.0, 2.5),
+        0.48,
+        0.0,
+        1.10,
+        white_plaster,
+    ));
+    world.add(Sphere::new(Point3::new(0.0, 1.1, -14.0), 1.0, fill_light));
+
+    // Pavilion columns and roofline.
+    for i in -7..=7 {
+        let x = i as f64 * 1.1;
+        world.add_cylinder(Cylinder::new(
+            Point3::new(x, 0.0, -10.5),
+            0.33,
+            0.0,
+            4.0,
+            white_plaster,
+        ));
+        world.add(Sphere::new(Point3::new(x, 4.2, -10.5), 0.24, terracotta));
+    }
+    for i in -18..=18 {
+        let x = i as f64 * 0.48;
+        world.add_box(Box3::new(
+            Point3::new(x - 0.17, 4.25, -11.0),
+            Point3::new(x + 0.17, 4.65, -10.0),
+            terracotta,
+        ));
     }
 
-    // Thousands of small objects: micro city field.
-    let grid_radius = env_usize("PATHTRACE_GRID_RADIUS", 24) as i32;
-    let spacing = env_f64("PATHTRACE_GRID_SPACING", 0.56);
+    // Distant background masses for depth.
+    for i in 0..70 {
+        let a = i as f64 / 70.0 * 2.0 * PI;
+        world.add(Sphere::new(
+            Point3::new(
+                44.0 * a.cos(),
+                -11.0 + 1.8 * (a * 3.0).sin(),
+                -56.0 + 15.0 * a.sin(),
+            ),
+            8.5 + 3.8 * (a * 4.0).sin().abs(),
+            if i % 2 == 0 {
+                foliage_dark
+            } else {
+                foliage_light
+            },
+        ));
+    }
+
+    // Thousands of mixed objects (boxes/cylinders/spheres/lights).
+    let grid_radius = env_usize("PATHTRACE_GRID_RADIUS", 28) as i32;
+    let spacing = 0.72;
     for gx in -grid_radius..=grid_radius {
         for gz in -grid_radius..=grid_radius {
             let x = gx as f64 * spacing;
-            let z = gz as f64 * spacing;
-            if x * x + z * z < 22.0 {
+            let z = gz as f64 * spacing - 2.2;
+            if x * x + z * z < 42.0 {
                 continue;
             }
 
-            let seed = ((gx + 2000) as u32)
-                .wrapping_mul(93_113)
-                .wrapping_add(((gz + 2000) as u32).wrapping_mul(689_287_499))
-                .wrapping_add((frame_idx as u32).wrapping_mul(977));
+            let seed = ((gx + 3000) as u32)
+                .wrapping_mul(127_481)
+                .wrapping_add(((gz + 3000) as u32).wrapping_mul(596_057));
+            let jx = hash_range(seed ^ 0x1111, -0.24, 0.24);
+            let jz = hash_range(seed ^ 0x2222, -0.24, 0.24);
+            let px = x + jx;
+            let pz = z + jz;
 
-            let jitter_x = hash_range(seed ^ 0xA2D3, -0.22, 0.22);
-            let jitter_z = hash_range(seed ^ 0x7B1F, -0.22, 0.22);
-            let radius = hash_range(seed ^ 0xE91C, 0.06, 0.18);
-            let px = x + jitter_x;
-            let pz = z + jitter_z - 1.8;
-            let py = radius;
-            let mat_pick = hash01(seed ^ 0x51FA);
-
-            if mat_pick < 0.56 {
+            let pick = hash01(seed ^ 0x3333);
+            if pick < 0.44 {
+                let w = hash_range(seed ^ 0x4444, 0.14, 0.42);
+                let d = hash_range(seed ^ 0x5555, 0.14, 0.42);
+                let h = hash_range(seed ^ 0x6666, 0.22, 2.10);
                 let c = Color::new(
-                    hash_range(seed ^ 0x1111, 0.18, 0.92),
-                    hash_range(seed ^ 0x2222, 0.18, 0.92),
-                    hash_range(seed ^ 0x3333, 0.18, 0.92),
+                    hash_range(seed ^ 0x7100, 0.20, 0.92),
+                    hash_range(seed ^ 0x7200, 0.20, 0.92),
+                    hash_range(seed ^ 0x7300, 0.20, 0.92),
                 );
-                world.add(Sphere::new(
-                    Point3::new(px, py, pz),
-                    radius,
-                    Lambertion::new(c),
+                let mat: Material = if hash01(seed ^ 0x7777) < 0.12 {
+                    Metal::new(c, hash_range(seed ^ 0x7888, 0.0, 0.16)).into()
+                } else {
+                    Lambertion::new(c).into()
+                };
+                world.add_box(Box3::new(
+                    Point3::new(px - w, 0.0, pz - d),
+                    Point3::new(px + w, h, pz + d),
+                    mat,
                 ));
-            } else if mat_pick < 0.86 {
+            } else if pick < 0.82 {
+                let r = hash_range(seed ^ 0x8888, 0.09, 0.24);
+                let h = hash_range(seed ^ 0x9999, 0.24, 2.4);
                 let c = Color::new(
-                    hash_range(seed ^ 0x4444, 0.58, 0.98),
-                    hash_range(seed ^ 0x5555, 0.58, 0.98),
-                    hash_range(seed ^ 0x6666, 0.58, 0.98),
+                    hash_range(seed ^ 0xA100, 0.22, 0.95),
+                    hash_range(seed ^ 0xA200, 0.22, 0.95),
+                    hash_range(seed ^ 0xA300, 0.22, 0.95),
                 );
-                let fuzz = hash_range(seed ^ 0x7777, 0.0, 0.10);
-                world.add(Sphere::new(
-                    Point3::new(px, py, pz),
-                    radius,
-                    Metal::new(c, fuzz),
-                ));
-            } else if mat_pick < 0.96 {
-                world.add(Sphere::new(
-                    Point3::new(px, py, pz),
-                    radius,
-                    Dialectric::new(1.5),
-                ));
+                let mat: Material = if hash01(seed ^ 0xAAAA) < 0.20 {
+                    Metal::new(c, hash_range(seed ^ 0xBBBB, 0.0, 0.14)).into()
+                } else {
+                    Lambertion::new(c).into()
+                };
+                world.add_cylinder(Cylinder::new(Point3::new(px, 0.0, pz), r, 0.0, h, mat));
+            } else if pick < 0.96 {
+                let r = hash_range(seed ^ 0xCCCC, 0.10, 0.30);
+                if hash01(seed ^ 0xCDCD) < 0.45 {
+                    world.add(Sphere::new(Point3::new(px, r, pz), r, glass));
+                } else {
+                    world.add(Sphere::new(
+                        Point3::new(px, r, pz),
+                        r,
+                        Metal::new(
+                            Color::new(
+                                hash_range(seed ^ 0xDD01, 0.60, 0.98),
+                                hash_range(seed ^ 0xDD02, 0.60, 0.98),
+                                hash_range(seed ^ 0xDD03, 0.60, 0.98),
+                            ),
+                            hash_range(seed ^ 0xDD04, 0.0, 0.08),
+                        ),
+                    ));
+                }
             } else {
-                let emit = Color::new(
-                    hash_range(seed ^ 0x8888, 3.5, 9.5),
-                    hash_range(seed ^ 0x9999, 3.0, 8.0),
-                    hash_range(seed ^ 0xAAAA, 2.8, 7.4),
-                );
+                let r = hash_range(seed ^ 0xEEEE, 0.08, 0.20);
                 world.add(Sphere::new(
-                    Point3::new(px, py + 0.04, pz),
-                    radius,
-                    DiffuseLight::new(emit),
+                    Point3::new(px, r + 0.06, pz),
+                    r,
+                    DiffuseLight::new(Color::new(
+                        hash_range(seed ^ 0xF100, 3.2, 10.0),
+                        hash_range(seed ^ 0xF200, 2.8, 8.8),
+                        hash_range(seed ^ 0xF300, 2.4, 7.6),
+                    )),
                 ));
             }
         }
-    }
-
-    // Distant background mass.
-    for i in 0..60 {
-        let a = i as f64 / 60.0 * 2.0 * PI;
-        world.add(Sphere::new(
-            Point3::new(
-                42.0 * a.cos(),
-                -10.0 + 1.8 * (a * 3.0).sin(),
-                -58.0 + 14.0 * a.sin(),
-            ),
-            9.5 + 3.5 * (a * 5.0).sin().abs(),
-            Lambertion::new(Color::new(0.16, 0.28, 0.14)),
-        ));
     }
 
     world
 }
 
-fn build_camera(frame_idx: usize, total_frames: usize) -> Camera {
-    let frame_t = if total_frames <= 1 {
-        0.0
-    } else {
-        frame_idx as f64 / (total_frames - 1) as f64
-    };
-    let orbit_span_deg = env_f64("PATHTRACE_ORBIT_DEG", 62.0);
-    let orbit_span = orbit_span_deg.to_radians();
-    let theta = (-0.5 + frame_t) * orbit_span;
-    let radius = env_f64("PATHTRACE_CAM_RADIUS", 21.5);
-    let base_height = env_f64("PATHTRACE_CAM_HEIGHT", 3.2);
+fn main() {
+    let world = build_cinematic_world();
+    let sphere_count = world.spheres().len();
+    let plane_count = world.planes().len();
+    let box_count = world.boxes().len();
+    let cylinder_count = world.cylinders().len();
+    let object_count = sphere_count + plane_count + box_count + cylinder_count;
 
     let mut cam = Camera::new();
-    cam.aspect_ratio = env_f64("PATHTRACE_ASPECT", 16.0 / 9.0);
+    cam.aspect_ratio = 2.39;
     cam.image_width = env_usize("PATHTRACE_WIDTH", 2560);
-    cam.samples_per_pixel = env_usize("PATHTRACE_SPP", if total_frames > 1 { 64 } else { 128 });
+    cam.samples_per_pixel = env_usize("PATHTRACE_SPP", 128);
     cam.max_depth = env_usize("PATHTRACE_MAX_DEPTH", 96);
 
-    cam.vfov = env_f64("PATHTRACE_VFOV", 34.0);
-    cam.lookfrom = Point3::new(
-        radius * theta.sin(),
-        base_height + 0.55 * (frame_t * 2.0 * PI).sin(),
-        radius * theta.cos() + 6.2,
-    );
-    cam.lookat = Point3::new(0.0, 1.1 + 0.25 * (frame_t * 2.0 * PI).cos(), -1.4);
+    cam.vfov = 31.0;
+    cam.lookfrom = Point3::new(-14.0, 7.2, 26.0);
+    cam.lookat = Point3::new(0.0, 1.8, -2.0);
     cam.vup = Vec3::new(0.0, 1.0, 0.0);
+    cam.defocus_angle = 0.06;
+    cam.focus_dist = 28.0;
 
-    cam.defocus_angle = env_f64("PATHTRACE_DEFOCUS", 0.07);
-    cam.focus_dist = env_f64("PATHTRACE_FOCUS_DIST", 22.0);
-    cam
-}
+    eprintln!(
+        "cinematic still | objects={} (sphere={}, plane={}, box={}, cylinder={}) | spp={} | width={}",
+        object_count,
+        sphere_count,
+        plane_count,
+        box_count,
+        cylinder_count,
+        cam.samples_per_pixel,
+        cam.image_width
+    );
 
-fn render_with_mode(cam: &mut Camera, world: &HittableList) -> Result<(), String> {
-    if std::env::var_os("PATHTRACE_CPU_ONLY").is_some() {
-        cam.render(world);
-        Ok(())
-    } else if std::env::var_os("PATHTRACE_GPU_ONLY").is_some() {
-        if let Err(err) = cam.render_gpu(world) {
+    if std::env::var("PATHTRACE_CPU_ONLY").is_ok() {
+        cam.render(&world);
+    } else if std::env::var("PATHTRACE_GPU_ONLY").is_ok() {
+        if let Err(err) = cam.render_gpu(&world) {
             eprintln!("\nGPU rendering failed: {err}");
             eprintln!("Falling back to CPU renderer...");
-            cam.render(world);
+            cam.render(&world);
         }
-        Ok(())
-    } else if let Err(err) = cam.render_hybrid(world) {
+    } else if let Err(err) = cam.render_hybrid(&world) {
         eprintln!("\nHybrid rendering failed: {err}");
         eprintln!("Falling back to GPU renderer...");
-        if let Err(gpu_err) = cam.render_gpu(world) {
+        if let Err(gpu_err) = cam.render_gpu(&world) {
             eprintln!("\nGPU rendering failed: {gpu_err}");
             eprintln!("Falling back to CPU renderer...");
-            cam.render(world);
+            cam.render(&world);
         }
-        Ok(())
-    } else {
-        Ok(())
     }
-}
-
-fn move_outputs_to_frame(output_dir: &str, frame_idx: usize) -> Result<(), String> {
-    let ldr_dst = format!("{output_dir}/frame_{frame_idx:04}_16bit.ppm");
-    let hdr_dst = format!("{output_dir}/frame_{frame_idx:04}_hdr.pfm");
-    if Path::new(&ldr_dst).exists() {
-        fs::remove_file(&ldr_dst).map_err(|e| format!("Failed removing {ldr_dst}: {e}"))?;
-    }
-    if Path::new(&hdr_dst).exists() {
-        fs::remove_file(&hdr_dst).map_err(|e| format!("Failed removing {hdr_dst}: {e}"))?;
-    }
-    fs::rename("image_16bit.ppm", &ldr_dst).map_err(|e| format!("Failed moving LDR frame: {e}"))?;
-    fs::rename("image_hdr.pfm", &hdr_dst).map_err(|e| format!("Failed moving HDR frame: {e}"))?;
-    Ok(())
-}
-
-fn maybe_make_video(output_dir: &str, frames: usize) {
-    if std::env::var_os("PATHTRACE_MAKE_MP4").is_none() {
-        return;
-    }
-    let fps = env_usize("PATHTRACE_ANIM_FPS", 24);
-    let output_mp4 = format!("{output_dir}/cinematic.mp4");
-    let status = Command::new("ffmpeg")
-        .arg("-y")
-        .arg("-framerate")
-        .arg(fps.to_string())
-        .arg("-i")
-        .arg(format!("{output_dir}/frame_%04d_16bit.ppm"))
-        .arg("-frames:v")
-        .arg(frames.to_string())
-        .arg("-pix_fmt")
-        .arg("yuv420p")
-        .arg(&output_mp4)
-        .status();
-
-    match status {
-        Ok(s) if s.success() => eprintln!("MP4 generated: {output_mp4}"),
-        Ok(s) => eprintln!("ffmpeg failed with status: {s}"),
-        Err(e) => eprintln!("ffmpeg not available or failed to launch: {e}"),
-    }
-}
-
-fn main() {
-    let frames = env_usize("PATHTRACE_ANIM_FRAMES", 1);
-    let output_dir = std::env::var("PATHTRACE_ANIM_DIR").unwrap_or_else(|_| "frames".to_string());
-
-    if frames <= 1 {
-        let world = build_cinematic_world(0, 1);
-        let object_count = world.spheres().len() + world.planes().len();
-        let mut cam = build_camera(0, 1);
-        eprintln!(
-            "Single frame render | objects={} (spheres={}, planes={}) | spp={}",
-            object_count,
-            world.spheres().len(),
-            world.planes().len(),
-            cam.samples_per_pixel
-        );
-        if let Err(err) = render_with_mode(&mut cam, &world) {
-            eprintln!("Rendering failed: {err}");
-        }
-        return;
-    }
-
-    if let Err(e) = fs::create_dir_all(&output_dir) {
-        eprintln!("Failed to create output directory {output_dir}: {e}");
-        return;
-    }
-
-    let all_start = Instant::now();
-    for frame_idx in 0..frames {
-        let frame_start = Instant::now();
-        let world = build_cinematic_world(frame_idx, frames);
-        let object_count = world.spheres().len() + world.planes().len();
-        let mut cam = build_camera(frame_idx, frames);
-
-        eprintln!(
-            "\n[Frame {}/{}] objects={} (spheres={}, planes={}) spp={}",
-            frame_idx + 1,
-            frames,
-            object_count,
-            world.spheres().len(),
-            world.planes().len(),
-            cam.samples_per_pixel
-        );
-
-        if let Err(err) = render_with_mode(&mut cam, &world) {
-            eprintln!("Frame {} render failed: {err}", frame_idx);
-            return;
-        }
-        if let Err(err) = move_outputs_to_frame(&output_dir, frame_idx) {
-            eprintln!("Frame {} output move failed: {err}", frame_idx);
-            return;
-        }
-        eprintln!(
-            "[Frame {}/{}] done in {:.1}s",
-            frame_idx + 1,
-            frames,
-            frame_start.elapsed().as_secs_f64()
-        );
-    }
-    eprintln!(
-        "\nAnimation render complete: {} frames in {:.1}s",
-        frames,
-        all_start.elapsed().as_secs_f64()
-    );
-    maybe_make_video(&output_dir, frames);
 }

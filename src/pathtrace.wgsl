@@ -1,6 +1,7 @@
 struct Params {
     dims: vec4<u32>,      // width, height, samples, max_depth
     scene: vec4<u32>,     // sphere_count, sample_base, plane_count, reserved
+    scene2: vec4<u32>,    // box_count, cylinder_count, reserved
     center: vec4<f32>,
     pixel00: vec4<f32>,
     delta_u: vec4<f32>,
@@ -22,6 +23,20 @@ struct Plane {
     kind_data: vec4<f32>,     // x = kind (0 lambert, 1 metal, 2 dielectric)
 }
 
+struct BoxPrim {
+    minp: vec4<f32>,          // xyz + unused
+    maxp: vec4<f32>,          // xyz + unused
+    material: vec4<f32>,      // rgb + (fuzz or refraction_index)
+    kind_data: vec4<f32>,     // x = kind (0 lambert, 1 metal, 2 dielectric)
+}
+
+struct Cylinder {
+    center_radius_ymin: vec4<f32>, // x, z, radius, y_min
+    ymax: vec4<f32>,               // y_max + unused
+    material: vec4<f32>,           // rgb + (fuzz or refraction_index)
+    kind_data: vec4<f32>,          // x = kind (0 lambert, 1 metal, 2 dielectric)
+}
+
 struct Ray {
     origin: vec3<f32>,
     direction: vec3<f32>,
@@ -33,7 +48,7 @@ struct HitRecord {
     p: vec3<f32>,
     normal: vec3<f32>,
     front_face: u32,
-    object_kind: u32,  // 0 sphere, 1 plane
+    object_kind: u32,  // 0 sphere, 1 plane, 2 box, 3 cylinder
     object_index: u32,
 }
 
@@ -50,6 +65,8 @@ const RAY_T_MIN: f32 = 0.001;
 @group(0) @binding(1) var<storage, read> spheres: array<Sphere>;
 @group(0) @binding(2) var<storage, read_write> output_pixels: array<vec4<f32>>;
 @group(0) @binding(3) var<storage, read> planes: array<Plane>;
+@group(0) @binding(4) var<storage, read> boxes: array<BoxPrim>;
+@group(0) @binding(5) var<storage, read> cylinders: array<Cylinder>;
 
 fn rng_next(state: ptr<function, u32>) -> f32 {
     (*state) = (*state) * 1664525u + 1013904223u;
@@ -130,6 +147,8 @@ fn world_hit(ray: Ray, t_min: f32) -> HitRecord {
     var closest = 1e30;
     let sphere_count = params.scene.x;
     let plane_count = params.scene.z;
+    let box_count = params.scene2.x;
+    let cylinder_count = params.scene2.y;
 
     for (var i: u32 = 0u; i < sphere_count; i = i + 1u) {
         let sphere = spheres[i];
@@ -198,6 +217,183 @@ fn world_hit(ray: Ray, t_min: f32) -> HitRecord {
         closest = root;
     }
 
+    for (var i: u32 = 0u; i < box_count; i = i + 1u) {
+        let b = boxes[i];
+
+        var t_enter = -1e30;
+        var t_exit = 1e30;
+
+        let mins = b.minp.xyz;
+        let maxs = b.maxp.xyz;
+        let o = ray.origin;
+        let d = ray.direction;
+
+        for (var axis: u32 = 0u; axis < 3u; axis = axis + 1u) {
+            let origin_a = select(select(o.x, o.y, axis == 1u), o.z, axis == 2u);
+            let dir_a = select(select(d.x, d.y, axis == 1u), d.z, axis == 2u);
+            let min_a = select(select(mins.x, mins.y, axis == 1u), mins.z, axis == 2u);
+            let max_a = select(select(maxs.x, maxs.y, axis == 1u), maxs.z, axis == 2u);
+
+            if abs(dir_a) < 1e-6 {
+                if origin_a < min_a || origin_a > max_a {
+                    t_exit = -1.0;
+                    break;
+                }
+                continue;
+            }
+
+            var t0 = (min_a - origin_a) / dir_a;
+            var t1 = (max_a - origin_a) / dir_a;
+            if t0 > t1 {
+                let tmp = t0;
+                t0 = t1;
+                t1 = tmp;
+            }
+            t_enter = max(t_enter, t0);
+            t_exit = min(t_exit, t1);
+            if t_exit < t_enter {
+                break;
+            }
+        }
+
+        if t_exit < t_enter {
+            continue;
+        }
+
+        var root = t_enter;
+        if !(root > t_min && root < closest) {
+            root = t_exit;
+            if !(root > t_min && root < closest) {
+                continue;
+            }
+        }
+
+        let p = ray.origin + root * ray.direction;
+        let eps = 1e-4;
+        var normal = vec3<f32>(0.0, 0.0, 1.0);
+        if abs(p.x - mins.x) < eps {
+            normal = vec3<f32>(-1.0, 0.0, 0.0);
+        } else if abs(p.x - maxs.x) < eps {
+            normal = vec3<f32>(1.0, 0.0, 0.0);
+        } else if abs(p.y - mins.y) < eps {
+            normal = vec3<f32>(0.0, -1.0, 0.0);
+        } else if abs(p.y - maxs.y) < eps {
+            normal = vec3<f32>(0.0, 1.0, 0.0);
+        } else if abs(p.z - mins.z) < eps {
+            normal = vec3<f32>(0.0, 0.0, -1.0);
+        }
+
+        let front = dot(ray.direction, normal) < 0.0;
+        if !front {
+            normal = -normal;
+        }
+
+        rec.hit = 1u;
+        rec.t = root;
+        rec.p = p;
+        rec.normal = normal;
+        rec.front_face = select(0u, 1u, front);
+        rec.object_kind = 2u;
+        rec.object_index = i;
+        closest = root;
+    }
+
+    for (var i: u32 = 0u; i < cylinder_count; i = i + 1u) {
+        let c = cylinders[i];
+        let cx = c.center_radius_ymin.x;
+        let cz = c.center_radius_ymin.y;
+        let radius = c.center_radius_ymin.z;
+        let y_min_c = c.center_radius_ymin.w;
+        let y_max_c = c.ymax.x;
+
+        let ox = ray.origin.x - cx;
+        let oz = ray.origin.z - cz;
+        let dx = ray.direction.x;
+        let dz = ray.direction.z;
+
+        var hit_t = 1e30;
+        var hit_normal = vec3<f32>(0.0);
+
+        let a = dx * dx + dz * dz;
+        if a > 1e-8 {
+            let b = 2.0 * (ox * dx + oz * dz);
+            let cc = ox * ox + oz * oz - radius * radius;
+            let disc = b * b - 4.0 * a * cc;
+            if disc >= 0.0 {
+                let sq = sqrt(disc);
+                let inv2a = 0.5 / a;
+                var t0 = (-b - sq) * inv2a;
+                var t1 = (-b + sq) * inv2a;
+                if t0 > t1 {
+                    let tmp = t0;
+                    t0 = t1;
+                    t1 = tmp;
+                }
+
+                if t0 > t_min && t0 < closest {
+                    let y0 = ray.origin.y + t0 * ray.direction.y;
+                    if y0 >= y_min_c && y0 <= y_max_c {
+                        hit_t = t0;
+                        let p0 = ray.origin + t0 * ray.direction;
+                        hit_normal = normalize(vec3<f32>(p0.x - cx, 0.0, p0.z - cz));
+                    }
+                }
+                if t1 > t_min && t1 < min(closest, hit_t) {
+                    let y1 = ray.origin.y + t1 * ray.direction.y;
+                    if y1 >= y_min_c && y1 <= y_max_c {
+                        hit_t = t1;
+                        let p1 = ray.origin + t1 * ray.direction;
+                        hit_normal = normalize(vec3<f32>(p1.x - cx, 0.0, p1.z - cz));
+                    }
+                }
+            }
+        }
+
+        if abs(ray.direction.y) > 1e-8 {
+            let t_cap0 = (y_min_c - ray.origin.y) / ray.direction.y;
+            if t_cap0 > t_min && t_cap0 < min(closest, hit_t) {
+                let p0 = ray.origin + t_cap0 * ray.direction;
+                let qx = p0.x - cx;
+                let qz = p0.z - cz;
+                if qx * qx + qz * qz <= radius * radius {
+                    hit_t = t_cap0;
+                    hit_normal = vec3<f32>(0.0, -1.0, 0.0);
+                }
+            }
+
+            let t_cap1 = (y_max_c - ray.origin.y) / ray.direction.y;
+            if t_cap1 > t_min && t_cap1 < min(closest, hit_t) {
+                let p1 = ray.origin + t_cap1 * ray.direction;
+                let qx = p1.x - cx;
+                let qz = p1.z - cz;
+                if qx * qx + qz * qz <= radius * radius {
+                    hit_t = t_cap1;
+                    hit_normal = vec3<f32>(0.0, 1.0, 0.0);
+                }
+            }
+        }
+
+        if !(hit_t > t_min && hit_t < closest) {
+            continue;
+        }
+
+        let p = ray.origin + hit_t * ray.direction;
+        var normal = hit_normal;
+        let front = dot(ray.direction, normal) < 0.0;
+        if !front {
+            normal = -normal;
+        }
+
+        rec.hit = 1u;
+        rec.t = hit_t;
+        rec.p = p;
+        rec.normal = normal;
+        rec.front_face = select(0u, 1u, front);
+        rec.object_kind = 3u;
+        rec.object_index = i;
+        closest = hit_t;
+    }
+
     return rec;
 }
 
@@ -206,15 +402,29 @@ fn material_kind(rec: HitRecord) -> u32 {
         let sphere = spheres[rec.object_index];
         return u32(sphere.kind_data.x + 0.5);
     }
-    let plane = planes[rec.object_index];
-    return u32(plane.kind_data.x + 0.5);
+    if rec.object_kind == 1u {
+        let plane = planes[rec.object_index];
+        return u32(plane.kind_data.x + 0.5);
+    }
+    if rec.object_kind == 2u {
+        let b = boxes[rec.object_index];
+        return u32(b.kind_data.x + 0.5);
+    }
+    let c = cylinders[rec.object_index];
+    return u32(c.kind_data.x + 0.5);
 }
 
 fn material_data(rec: HitRecord) -> vec4<f32> {
     if rec.object_kind == 0u {
         return spheres[rec.object_index].material;
     }
-    return planes[rec.object_index].material;
+    if rec.object_kind == 1u {
+        return planes[rec.object_index].material;
+    }
+    if rec.object_kind == 2u {
+        return boxes[rec.object_index].material;
+    }
+    return cylinders[rec.object_index].material;
 }
 
 fn emitted_color(rec: HitRecord) -> vec3<f32> {

@@ -22,8 +22,9 @@ const GPU_SHADER: &str = include_str!("pathtrace.wgsl");
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GpuParams {
-    dims: [u32; 4],  // width, height, samples, max_depth
-    scene: [u32; 4], // sphere_count, sample_base, plane_count, reserved
+    dims: [u32; 4],   // width, height, samples, max_depth
+    scene: [u32; 4],  // sphere_count, sample_base, plane_count, reserved
+    scene2: [u32; 4], // box_count, cylinder_count, reserved...
     center: [f32; 4],
     pixel00: [f32; 4],
     delta_u: [f32; 4],
@@ -64,6 +65,46 @@ impl GpuPlane {
         Self {
             point: [0.0, -10000.0, 0.0, 0.0],
             normal: [0.0, 1.0, 0.0, 0.0],
+            material: [0.0, 0.0, 0.0, 0.0],
+            meta: [0.0, 0.0, 0.0, 0.0],
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GpuBox {
+    min: [f32; 4],      // xyz + unused
+    max: [f32; 4],      // xyz + unused
+    material: [f32; 4], // rgb + (fuzz or refraction_index)
+    meta: [f32; 4],     // x = material kind (0 lambert, 1 metal, 2 dielectric, 3 light)
+}
+
+impl GpuBox {
+    fn dummy() -> Self {
+        Self {
+            min: [0.0, -10000.0, 0.0, 0.0],
+            max: [1.0, -9999.0, 1.0, 0.0],
+            material: [0.0, 0.0, 0.0, 0.0],
+            meta: [0.0, 0.0, 0.0, 0.0],
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GpuCylinder {
+    center_radius_ymin: [f32; 4], // x, z, radius, y_min
+    ymax: [f32; 4],               // y_max + unused
+    material: [f32; 4],           // rgb + (fuzz or refraction_index)
+    meta: [f32; 4],               // x = material kind (0 lambert, 1 metal, 2 dielectric, 3 light)
+}
+
+impl GpuCylinder {
+    fn dummy() -> Self {
+        Self {
+            center_radius_ymin: [0.0, 0.0, 0.0, 0.0],
+            ymax: [0.0, 0.0, 0.0, 0.0],
             material: [0.0, 0.0, 0.0, 0.0],
             meta: [0.0, 0.0, 0.0, 0.0],
         }
@@ -301,6 +342,8 @@ impl Camera {
 
         let sphere_count = world.spheres().len() as u32;
         let plane_count = world.planes().len() as u32;
+        let box_count = world.boxes().len() as u32;
+        let cylinder_count = world.cylinders().len() as u32;
         let mut gpu_spheres: Vec<GpuSphere> = world
             .spheres()
             .iter()
@@ -352,6 +395,45 @@ impl Camera {
             gpu_planes.push(GpuPlane::dummy());
         }
 
+        let mut gpu_boxes: Vec<GpuBox> = world
+            .boxes()
+            .iter()
+            .map(|b| {
+                let (material, kind) = encode_material(b.mat);
+                GpuBox {
+                    min: [b.min.x as f32, b.min.y as f32, b.min.z as f32, 0.0],
+                    max: [b.max.x as f32, b.max.y as f32, b.max.z as f32, 0.0],
+                    material,
+                    meta: [kind, 0.0, 0.0, 0.0],
+                }
+            })
+            .collect();
+        if gpu_boxes.is_empty() {
+            gpu_boxes.push(GpuBox::dummy());
+        }
+
+        let mut gpu_cylinders: Vec<GpuCylinder> = world
+            .cylinders()
+            .iter()
+            .map(|c| {
+                let (material, kind) = encode_material(c.mat);
+                GpuCylinder {
+                    center_radius_ymin: [
+                        c.center.x as f32,
+                        c.center.z as f32,
+                        c.radius as f32,
+                        c.y_min as f32,
+                    ],
+                    ymax: [c.y_max as f32, 0.0, 0.0, 0.0],
+                    material,
+                    meta: [kind, 0.0, 0.0, 0.0],
+                }
+            })
+            .collect();
+        if gpu_cylinders.is_empty() {
+            gpu_cylinders.push(GpuCylinder::dummy());
+        }
+
         let total_samples = self.samples_per_pixel.max(1) as u32;
         let max_depth = self.max_depth.max(1) as u32;
         let defocus_enabled = if self.defocus_angle > 0.0 { 1.0 } else { 0.0 };
@@ -363,6 +445,7 @@ impl Camera {
                 max_depth,
             ],
             scene: [sphere_count, 0, plane_count, 0],
+            scene2: [box_count, cylinder_count, 0, 0],
             center: [
                 self.center.x as f32,
                 self.center.y as f32,
@@ -431,6 +514,18 @@ impl Camera {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
 
+        let boxes_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("gpu-boxes-buffer"),
+            contents: bytemuck::cast_slice(&gpu_boxes),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let cylinders_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("gpu-cylinders-buffer"),
+            contents: bytemuck::cast_slice(&gpu_cylinders),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+
         let output_len = self.image_width * self.image_height;
         let output_buffer_size =
             (output_len * std::mem::size_of::<[f32; 4]>()) as wgpu::BufferAddress;
@@ -493,6 +588,26 @@ impl Camera {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -528,6 +643,14 @@ impl Camera {
                     wgpu::BindGroupEntry {
                         binding: 3,
                         resource: planes_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: boxes_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: cylinders_buffer.as_entire_binding(),
                     },
                 ],
             });
