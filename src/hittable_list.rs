@@ -10,7 +10,9 @@ pub struct HittableList {
 
 impl HittableList {
     pub fn new() -> HittableList {
-        HittableList {objects : Vec::new() }
+        HittableList {
+            objects: Vec::new(),
+        }
     }
     pub fn add(&mut self, object: Sphere) {
         self.objects.push(object)
@@ -22,11 +24,11 @@ impl HittableList {
 }
 
 impl Hittable for HittableList {
-    fn hit(&self, r: &Ray, ray_t:Interval) -> Option<HitRecord> {
+    fn hit(&self, r: &Ray, ray_t: Interval) -> Option<HitRecord> {
         let mut rec = None;
         let mut closet_so_far = ray_t.max;
         for object in self.objects.iter() {
-            if let Some(hrec)=object.hit(r,Interval::new(ray_t.min,closet_so_far)){
+            if let Some(hrec) = object.hit(r, Interval::new(ray_t.min, closet_so_far)) {
                 closet_so_far = hrec.t;
                 rec = Some(hrec);
             }

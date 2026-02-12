@@ -1,5 +1,4 @@
-use bytemuck::{Pod, Zeroable};
-use crate::color::{write_color_hdr, write_color_ldr16, Color};
+use crate::color::{Color, write_color_hdr, write_color_ldr16};
 use crate::hittable::Hittable;
 use crate::hittable_list::HittableList;
 use crate::interval::Interval;
@@ -8,12 +7,13 @@ use crate::ray::Ray;
 use crate::test::Point3;
 use crate::util::random_f64;
 use crate::vec3::Vec3;
+use bytemuck::{Pod, Zeroable};
 use rayon::prelude::*;
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use wgpu::util::DeviceExt;
 
@@ -22,8 +22,8 @@ const GPU_SHADER: &str = include_str!("pathtrace.wgsl");
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GpuParams {
-    dims: [u32; 4],     // width, height, samples, max_depth
-    scene: [u32; 4],    // sphere_count, reserved...
+    dims: [u32; 4],  // width, height, samples, max_depth
+    scene: [u32; 4], // sphere_count, reserved...
     center: [f32; 4],
     pixel00: [f32; 4],
     delta_u: [f32; 4],
@@ -52,46 +52,46 @@ impl GpuSphere {
 
 #[derive(Default, Clone)]
 pub struct Camera {
-    pub aspect_ratio : f64,
-    pub image_width : usize,
+    pub aspect_ratio: f64,
+    pub image_width: usize,
     pub samples_per_pixel: usize,
-    pub max_depth : usize,
-    pub vfov : f64,
-    pub lookfrom : Point3,
-    pub lookat : Point3,
-    pub vup : Vec3,
-    pub defocus_angle : f64,
-    pub focus_dist : f64,
+    pub max_depth: usize,
+    pub vfov: f64,
+    pub lookfrom: Point3,
+    pub lookat: Point3,
+    pub vup: Vec3,
+    pub defocus_angle: f64,
+    pub focus_dist: f64,
 
-    image_height : usize,
-    center : Point3,
-    pixel00_loc : Point3,
-    pixel_delta_u : Vec3,
-    pixel_delta_v : Vec3,
-    pixel_samples_scale : f64,
-    u : Vec3,
-    v : Vec3,
-    w : Vec3,
-    defocus_disk_u : Vec3,
-    defocus_disk_v : Vec3
+    image_height: usize,
+    center: Point3,
+    pixel00_loc: Point3,
+    pixel_delta_u: Vec3,
+    pixel_delta_v: Vec3,
+    pixel_samples_scale: f64,
+    u: Vec3,
+    v: Vec3,
+    w: Vec3,
+    defocus_disk_u: Vec3,
+    defocus_disk_v: Vec3,
 }
 
 impl Camera {
-    pub fn new() -> Camera{
+    pub fn new() -> Camera {
         Camera {
-            aspect_ratio:1.0,
-            image_width:100,
+            aspect_ratio: 1.0,
+            image_width: 100,
             samples_per_pixel: 10,
-            max_depth : 10,
-            vfov : 90.0,
-            lookfrom : Point3::new(0.0,0.0,0.0),
-            lookat : Point3::new(0.0,0.0,-1.0),
-            vup : Vec3::new(0.0,1.0,0.0),
+            max_depth: 10,
+            vfov: 90.0,
+            lookfrom: Point3::new(0.0, 0.0, 0.0),
+            lookat: Point3::new(0.0, 0.0, -1.0),
+            vup: Vec3::new(0.0, 1.0, 0.0),
             ..Default::default()
         }
     }
 
-    pub fn render(&mut self, world : & impl Hittable) {
+    pub fn render(&mut self, world: &impl Hittable) {
         self.initialize();
         let rows = self.render_cpu_rows(world, Some("Scanlines remaining"), None);
         self.write_outputs(&rows).unwrap();
@@ -123,8 +123,8 @@ impl Camera {
         let default_cpu_threads = std::thread::available_parallelism()
             .map(|n| n.get().saturating_sub(2).max(1))
             .unwrap_or(1);
-        let cpu_threads = Camera::env_usize("PATHTRACE_HYBRID_CPU_THREADS")
-            .unwrap_or(default_cpu_threads);
+        let cpu_threads =
+            Camera::env_usize("PATHTRACE_HYBRID_CPU_THREADS").unwrap_or(default_cpu_threads);
 
         eprintln!(
             "\nHybrid render (dynamic): total {} spp, chunk {} spp, CPU threads {}",
@@ -155,10 +155,15 @@ impl Camera {
                 }
                 let spp = (total_samples - sample_base).min(chunk_samples);
                 gpu_cam.samples_per_pixel = spp;
-                let rows = gpu_cam.render_gpu_rows(&world_for_gpu, false, sample_base as u32, false)?;
+                let rows =
+                    gpu_cam.render_gpu_rows(&world_for_gpu, false, sample_base as u32, false)?;
                 Camera::accumulate_rows_scaled(&mut gpu_sum_rows, &rows, spp as f64);
                 let done = completed_for_gpu.fetch_add(spp, Ordering::Relaxed) + spp;
-                eprint!("\rHybrid spp done: {}/{} ", done.min(total_samples), total_samples);
+                eprint!(
+                    "\rHybrid spp done: {}/{} ",
+                    done.min(total_samples),
+                    total_samples
+                );
             }
             Ok(gpu_sum_rows)
         });
@@ -173,7 +178,11 @@ impl Camera {
             let rows = cpu_cam.render_cpu_rows(world, None, Some(cpu_threads));
             Camera::accumulate_rows_scaled(&mut cpu_sum_rows, &rows, spp as f64);
             let done = completed_samples.fetch_add(spp, Ordering::Relaxed) + spp;
-            eprint!("\rHybrid spp done: {}/{} ", done.min(total_samples), total_samples);
+            eprint!(
+                "\rHybrid spp done: {}/{} ",
+                done.min(total_samples),
+                total_samples
+            );
         }
 
         let gpu_sum_rows = gpu_handle
@@ -252,21 +261,25 @@ impl Camera {
             .iter()
             .map(|sphere| {
                 let (material, kind) = match sphere.mat {
-                    Material::Lambertian { albedo } => {
-                        ([albedo.r as f32, albedo.g as f32, albedo.b as f32, 0.0], 0.0)
-                    }
+                    Material::Lambertian { albedo } => (
+                        [albedo.r as f32, albedo.g as f32, albedo.b as f32, 0.0],
+                        0.0,
+                    ),
                     Material::Metallic { albedo, fuzz } => (
-                        [albedo.r as f32, albedo.g as f32, albedo.b as f32, fuzz as f32],
+                        [
+                            albedo.r as f32,
+                            albedo.g as f32,
+                            albedo.b as f32,
+                            fuzz as f32,
+                        ],
                         1.0,
                     ),
-                    Material::Dielectric { refraction_index } => (
-                        [1.0, 1.0, 1.0, refraction_index as f32],
-                        2.0,
-                    ),
-                    Material::DiffuseLight { emit } => (
-                        [emit.r as f32, emit.g as f32, emit.b as f32, 0.0],
-                        3.0,
-                    ),
+                    Material::Dielectric { refraction_index } => {
+                        ([1.0, 1.0, 1.0, refraction_index as f32], 2.0)
+                    }
+                    Material::DiffuseLight { emit } => {
+                        ([emit.r as f32, emit.g as f32, emit.b as f32, 0.0], 3.0)
+                    }
                 };
 
                 GpuSphere {
@@ -378,42 +391,41 @@ impl Camera {
             mapped_at_creation: false,
         });
 
-        let bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("gpu-bind-group-layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("gpu-bind-group-layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                ],
-            });
+                    count: None,
+                },
+            ],
+        });
 
         let default_in_flight = if gpu_only_mode { 8 } else { 1 };
         let in_flight_dispatches = Camera::env_usize("PATHTRACE_GPU_INFLIGHT_DISPATCHES")
@@ -481,9 +493,8 @@ impl Camera {
             .map(|v| v as u32)
             .unwrap_or(if gpu_only_mode { 64 } else { 16 })
             .max(samples_per_dispatch);
-        let dispatches_before_poll =
-            ((target_outstanding_spp / samples_per_dispatch).max(1))
-                .min(in_flight_dispatches as u32) as usize;
+        let dispatches_before_poll = ((target_outstanding_spp / samples_per_dispatch).max(1))
+            .min(in_flight_dispatches as u32) as usize;
 
         if show_progress {
             eprint!(
@@ -529,7 +540,8 @@ impl Camera {
             in_flight_submissions.push_back((submission, submitted_sample_base));
 
             while in_flight_submissions.len() >= dispatches_before_poll {
-                if let Some((submission_to_wait, completed_samples)) = in_flight_submissions.pop_front()
+                if let Some((submission_to_wait, completed_samples)) =
+                    in_flight_submissions.pop_front()
                 {
                     device.poll(wgpu::Maintain::wait_for(submission_to_wait));
                     if show_progress {
@@ -580,14 +592,13 @@ impl Camera {
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = sender.send(result);
         });
-        let map_timeout_secs = Camera::env_usize("PATHTRACE_GPU_MAP_TIMEOUT_SEC")
-            .unwrap_or(120) as u64;
+        let map_timeout_secs =
+            Camera::env_usize("PATHTRACE_GPU_MAP_TIMEOUT_SEC").unwrap_or(120) as u64;
         let map_wait_start = Instant::now();
         loop {
             match receiver.try_recv() {
                 Ok(map_result) => {
-                    map_result
-                        .map_err(|e| format!("Failed to map GPU output buffer: {e:?}"))?;
+                    map_result.map_err(|e| format!("Failed to map GPU output buffer: {e:?}"))?;
                     break;
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -656,8 +667,7 @@ Try lowering PATHTRACE_GPU_SPP_PER_DISPATCH or PATHTRACE_GPU_INFLIGHT_DISPATCHES
         write!(
             ldr_out,
             "P6\n{} {}\n65535\n",
-            self.image_width,
-            self.image_height
+            self.image_width, self.image_height
         )?;
 
         for row in rows {
@@ -670,8 +680,7 @@ Try lowering PATHTRACE_GPU_SPP_PER_DISPATCH or PATHTRACE_GPU_INFLIGHT_DISPATCHES
         write!(
             hdr_out,
             "PF\n{} {}\n-1.0\n",
-            self.image_width,
-            self.image_height
+            self.image_width, self.image_height
         )?;
 
         // PFM expects scanlines from bottom to top.
@@ -687,20 +696,21 @@ Try lowering PATHTRACE_GPU_SPP_PER_DISPATCH or PATHTRACE_GPU_INFLIGHT_DISPATCHES
     }
 
     fn initialize(&mut self) {
-        self.image_height = (self.image_width as f64
-            / self.aspect_ratio) as usize;
-        self.image_height = if self.image_height < 1 {1} else {self.image_height};
+        self.image_height = (self.image_width as f64 / self.aspect_ratio) as usize;
+        self.image_height = if self.image_height < 1 {
+            1
+        } else {
+            self.image_height
+        };
 
         self.pixel_samples_scale = 1.0 / self.samples_per_pixel.max(1) as f64;
 
         self.center = self.lookfrom;
         let theta = self.vfov.to_radians();
-        let h = (theta/2.0).tan();
+        let h = (theta / 2.0).tan();
 
         let viewport_height = 2.0 * h * self.focus_dist;
-        let viewport_width = viewport_height
-            * (self.image_width as f64
-            / self.image_height as f64);
+        let viewport_width = viewport_height * (self.image_width as f64 / self.image_height as f64);
 
         self.w = (self.lookfrom - self.lookat).unit_vector();
         self.u = Vec3::cross(self.vup, self.w).unit_vector();
@@ -712,21 +722,25 @@ Try lowering PATHTRACE_GPU_SPP_PER_DISPATCH or PATHTRACE_GPU_INFLIGHT_DISPATCHES
         self.pixel_delta_u = viewport_u / self.image_width as f64;
         self.pixel_delta_v = viewport_v / self.image_height as f64;
 
-        let viewport_upper_left = self.center - (self.focus_dist * self.w)
-            -viewport_u / 2.0 - viewport_v / 2.0;
-        self.pixel00_loc = viewport_upper_left+0.5*(self.pixel_delta_u+self.pixel_delta_v);
+        let viewport_upper_left =
+            self.center - (self.focus_dist * self.w) - viewport_u / 2.0 - viewport_v / 2.0;
+        self.pixel00_loc = viewport_upper_left + 0.5 * (self.pixel_delta_u + self.pixel_delta_v);
 
         let defocus_radius = self.focus_dist * (self.defocus_angle / 2.0).to_radians().tan();
         self.defocus_disk_u = defocus_radius * self.u;
         self.defocus_disk_v = defocus_radius * self.v;
     }
 
-    fn get_ray(&self, i : usize, j : usize) -> Ray {
+    fn get_ray(&self, i: usize, j: usize) -> Ray {
         let offset = self.sample_square();
         let pixel_sample = self.pixel00_loc
             + (i as f64 + offset.x) * self.pixel_delta_u
-            +(j as f64 + offset.y)* self.pixel_delta_v;
-        let ray_origin = if self.defocus_angle <= 0.0 {self.center} else {self.defocus_disk_sample()};
+            + (j as f64 + offset.y) * self.pixel_delta_v;
+        let ray_origin = if self.defocus_angle <= 0.0 {
+            self.center
+        } else {
+            self.defocus_disk_sample()
+        };
 
         let ray_direction = pixel_sample - ray_origin;
         Ray::new(ray_origin, ray_direction)
@@ -738,10 +752,10 @@ Try lowering PATHTRACE_GPU_SPP_PER_DISPATCH or PATHTRACE_GPU_INFLIGHT_DISPATCHES
     }
 
     fn sample_square(&self) -> Vec3 {
-        Vec3::new(random_f64()-0.5, random_f64()-0.5,0.0)
+        Vec3::new(random_f64() - 0.5, random_f64() - 0.5, 0.0)
     }
 
-    fn ray_color(&self, r :&Ray, depth : usize, world : &impl Hittable) -> Color {
+    fn ray_color(&self, r: &Ray, depth: usize, world: &impl Hittable) -> Color {
         if depth == 0 {
             return Color::new(0.0, 0.0, 0.0);
         }

@@ -1,97 +1,137 @@
-mod vec3;
+mod camera;
 mod color;
-mod ray;
-mod test;
 mod hittable;
-mod sphere;
 mod hittable_list;
 mod interval;
-mod camera;
-mod util;
 mod material;
+mod ray;
+mod sphere;
+mod test;
+mod util;
+mod vec3;
 
 use camera::Camera;
-use hittable_list::HittableList;
-use sphere::Sphere;
-use vec3::{Vec3,Point3};
 use color::Color;
+use hittable_list::HittableList;
 use material::{Dialectric, DiffuseLight, Lambertion, Metal};
+use sphere::Sphere;
+use vec3::{Point3, Vec3};
 
 fn main() {
     let mut world = HittableList::new();
 
-    let room_half = 5.0;
-    let wall_radius = 1000.0;
+    let room_half = 6.5;
+    let wall_radius = 1200.0;
 
-    let white = Lambertion::new(Color::new(0.73, 0.73, 0.73));
-    let red = Lambertion::new(Color::new(0.65, 0.05, 0.05));
-    let green = Lambertion::new(Color::new(0.12, 0.45, 0.15));
-    let blue = Lambertion::new(Color::new(0.10, 0.18, 0.70));
-    let glossy_black_floor = Metal::new(Color::new(0.05, 0.05, 0.06), 0.01);
-    let warm_light = DiffuseLight::new(Color::new(36.0, 32.0, 28.0));
+    let ceiling_stone = Lambertion::new(Color::new(0.74, 0.72, 0.70));
+    let left_panel = Lambertion::new(Color::new(0.36, 0.22, 0.16));
+    let right_panel = Lambertion::new(Color::new(0.18, 0.24, 0.34));
+    let back_stage = Lambertion::new(Color::new(0.08, 0.10, 0.18));
+    let piano_black_floor = Metal::new(Color::new(0.02, 0.02, 0.025), 0.002);
 
-    // Cornell-box style room from large spheres.
+    let marble = Lambertion::new(Color::new(0.83, 0.80, 0.76));
+    let velvet = Lambertion::new(Color::new(0.56, 0.06, 0.08));
+    let trim_gold = Metal::new(Color::new(0.88, 0.74, 0.35), 0.03);
+    let chrome = Metal::new(Color::new(0.95, 0.97, 0.99), 0.0);
+
+    let chandelier_light = DiffuseLight::new(Color::new(28.0, 24.0, 20.0));
+    let sconce_light = DiffuseLight::new(Color::new(18.0, 12.0, 8.0));
+    let cool_fill = DiffuseLight::new(Color::new(8.0, 12.0, 18.0));
+
+    // New cinematic lounge shell.
     world.add(Sphere::new(
         Point3::new(0.0, -(wall_radius + room_half), 0.0),
         wall_radius,
-        glossy_black_floor,
-    )); // floor
+        piano_black_floor,
+    ));
     world.add(Sphere::new(
         Point3::new(0.0, wall_radius + room_half, 0.0),
         wall_radius,
-        white,
-    )); // ceiling
+        ceiling_stone,
+    ));
     world.add(Sphere::new(
         Point3::new(-(wall_radius + room_half), 0.0, 0.0),
         wall_radius,
-        red,
-    )); // left wall
+        left_panel,
+    ));
     world.add(Sphere::new(
         Point3::new(wall_radius + room_half, 0.0, 0.0),
         wall_radius,
-        green,
-    )); // right wall
+        right_panel,
+    ));
     world.add(Sphere::new(
         Point3::new(0.0, 0.0, -(wall_radius + room_half)),
         wall_radius,
-        blue,
-    )); // back wall
+        back_stage,
+    ));
 
-    // Practical area-like ceiling light.
-    world.add(Sphere::new(Point3::new(0.0, 4.2, 0.0), 1.6, warm_light));
+    // Ceiling chandeliers.
+    for &z in &[-6.0, 0.0, 6.0] {
+        world.add(Sphere::new(Point3::new(0.0, 5.6, z), 0.95, chandelier_light));
+        world.add(Sphere::new(Point3::new(-0.95, 5.1, z), 0.38, Dialectric::new(1.5)));
+        world.add(Sphere::new(Point3::new(0.95, 5.1, z), 0.38, Dialectric::new(1.5)));
+        world.add(Sphere::new(Point3::new(0.0, 4.75, z), 0.30, Dialectric::new(1.5)));
+        world.add(Sphere::new(Point3::new(0.0, 6.25, z), 0.22, trim_gold));
+    }
 
-    // Hero objects.
+    // Side wall sconces.
+    for &x in &[-5.2, 5.2] {
+        for &z in &[-6.0, -2.2, 2.2, 6.0] {
+            world.add(Sphere::new(Point3::new(x, 0.85, z), 0.33, sconce_light));
+            world.add(Sphere::new(Point3::new(x * 0.97, 0.72, z), 0.24, trim_gold));
+        }
+    }
+
+    // Decorative side columns.
+    for &x in &[-4.4, 4.4] {
+        for &z in &[-6.8, -3.4, 0.0, 3.4, 6.8] {
+            world.add(Sphere::new(Point3::new(x, -5.95, z), 0.52, marble));
+            world.add(Sphere::new(Point3::new(x, -4.95, z), 0.52, marble));
+            world.add(Sphere::new(Point3::new(x, -3.95, z), 0.52, marble));
+            world.add(Sphere::new(Point3::new(x, -3.10, z), 0.30, trim_gold));
+        }
+    }
+
+    // Center stage hero objects.
+    world.add(Sphere::new(Point3::new(0.0, -5.85, 0.0), 1.15, marble));
+    world.add(Sphere::new(Point3::new(0.0, -4.10, 0.0), 1.35, Dialectric::new(1.5)));
+    world.add(Sphere::new(Point3::new(-2.2, -4.6, -1.0), 0.95, chrome));
+    world.add(Sphere::new(Point3::new(2.5, -4.7, 1.2), 0.85, trim_gold));
     world.add(Sphere::new(
-        Point3::new(-1.6, -4.0, -0.8),
-        1.0,
-        Dialectric::new(1.5),
+        Point3::new(1.0, -5.5, -2.8),
+        0.45,
+        Lambertion::new(Color::new(0.24, 0.34, 0.78)),
     ));
     world.add(Sphere::new(
-        Point3::new(1.5, -4.0, 0.4),
-        1.0,
-        Metal::new(Color::new(0.92, 0.94, 0.98), 0.01),
+        Point3::new(-1.2, -5.45, 2.6),
+        0.48,
+        Lambertion::new(Color::new(0.72, 0.22, 0.18)),
     ));
-    world.add(Sphere::new(
-        Point3::new(0.0, -4.25, -2.0),
-        0.75,
-        Lambertion::new(Color::new(0.72, 0.72, 0.70)),
-    ));
+
+    // Velvet bead-like center runway.
+    for i in -10..=10 {
+        let z = i as f64 * 0.75;
+        let r = if i % 3 == 0 { 0.16 } else { 0.14 };
+        world.add(Sphere::new(Point3::new(0.0, -6.42, z), r, velvet));
+    }
+
+    // Soft cool fill from rear.
+    world.add(Sphere::new(Point3::new(0.0, -0.6, -7.9), 0.62, cool_fill));
 
     let mut cam = Camera::new();
 
+    cam.aspect_ratio = 2.39;
+    cam.image_width = 3840;
+    cam.samples_per_pixel = 32768;
+    cam.max_depth = 128;
 
-    cam.aspect_ratio= 3.0/4.0;
-    cam.image_width = 2160;
-    cam.samples_per_pixel = 65536;
-    cam.max_depth = 1000;
+    cam.vfov = 33.0;
+    cam.lookfrom = Point3::new(0.0, -2.8, 24.0);
+    cam.lookat = Point3::new(0.0, -4.6, 0.0);
+    cam.vup = Vec3::new(0.0, 1.0, 0.0);
 
-    cam.vfov = 60.0;
-    cam.lookfrom = Point3::new(0.0, 0.3, 14.0);
-    cam.lookat = Point3::new(0.0, -3.6, 0.0);
-    cam.vup = Vec3::new(0.0,1.0,0.0);
-
-    cam.defocus_angle = 0.0;
-    cam.focus_dist = 14.0;
+    cam.defocus_angle = 0.18;
+    cam.focus_dist = 24.0;
 
     if std::env::var("PATHTRACE_CPU_ONLY").is_ok() {
         cam.render(&world);
@@ -110,5 +150,4 @@ fn main() {
             cam.render(&world);
         }
     }
-
 }

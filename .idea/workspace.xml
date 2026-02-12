@@ -16,7 +16,20 @@
   <component name="ChangeListManager">
     <list default="true" id="75173ee4-9ec3-469a-9dac-bb0839b820bd" name="변경" comment="run!">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/image_16bit.ppm" beforeDir="false" afterPath="$PROJECT_DIR$/image_16bit.ppm" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/image_hdr.pfm" beforeDir="false" afterPath="$PROJECT_DIR$/image_hdr.pfm" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/camera.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/camera.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/color.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/color.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/hittable.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/hittable.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/hittable_list.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/hittable_list.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/interval.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/interval.rs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/main.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/main.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/material.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/material.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/ray.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/ray.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/sphere.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/sphere.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/test.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/test.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/util.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/util.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/vec3.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/vec3.rs" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -141,7 +154,8 @@
       <workItem from="1770679112415" duration="15919000" />
       <workItem from="1770741601755" duration="2809000" />
       <workItem from="1770744437950" duration="10535000" />
-      <workItem from="1770767075481" duration="2044000" />
+      <workItem from="1770767075481" duration="3289000" />
+      <workItem from="1770859249076" duration="666000" />
     </task>
     <task id="LOCAL-00001" summary="run!">
       <option name="closed" value="true" />
@@ -271,7 +285,23 @@
       <option name="project" value="LOCAL" />
       <updated>1770768269823</updated>
     </task>
-    <option name="localTasksCounter" value="17" />
+    <task id="LOCAL-00017" summary="run!">
+      <option name="closed" value="true" />
+      <created>1770786577552</created>
+      <option name="number" value="00017" />
+      <option name="presentableId" value="LOCAL-00017" />
+      <option name="project" value="LOCAL" />
+      <updated>1770786577552</updated>
+    </task>
+    <task id="LOCAL-00018" summary="run!">
+      <option name="closed" value="true" />
+      <created>1770823979510</created>
+      <option name="number" value="00018" />
+      <option name="presentableId" value="LOCAL-00018" />
+      <option name="project" value="LOCAL" />
+      <updated>1770823979510</updated>
+    </task>
+    <option name="localTasksCounter" value="19" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">

@@ -130,12 +130,12 @@ impl Material {
                 let cos_theta = Vec3::dot(-unit_direction, rec.normal).min(1.0);
                 let sin_theta = (1.0 - cos_theta * cos_theta).sqrt();
                 let cannot_refract = ri * sin_theta > 1.0;
-                let direction = if cannot_refract || Material::reflectance(cos_theta, ri) > random_f64()
-                {
-                    Vec3::reflect(unit_direction, rec.normal)
-                } else {
-                    Vec3::refract(unit_direction, rec.normal, ri)
-                };
+                let direction =
+                    if cannot_refract || Material::reflectance(cos_theta, ri) > random_f64() {
+                        Vec3::reflect(unit_direction, rec.normal)
+                    } else {
+                        Vec3::refract(unit_direction, rec.normal, ri)
+                    };
                 let scattered = Ray::new(rec.p, direction);
                 Some((attenuation, scattered))
             }
